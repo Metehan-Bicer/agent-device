@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import { AppError, normalizeError } from '@agent-device/kernel/errors';
+import { AppError, normalizeError, type NormalizedError } from '@agent-device/kernel/errors';
 import { readReplayDivergenceResume } from '@agent-device/ad-replay/divergence';
 import type { DaemonRequest, DaemonResponse } from '../daemon/daemon-request.ts';
 import { type ExecDetachedExit } from '@agent-device/host-kit/command';
@@ -440,8 +440,12 @@ export async function cleanupDaemonAfterRequest(
     phase: 'daemon_replay_cleanup',
     data: { pid: daemon.info.pid, ...result },
   });
-  if (result.status === 'retired' && result.repairCommitFailure) {
-    return surfaceUnrecoveredRepairCommitFailure(response, result.repairCommitFailure);
+  if (result.status !== 'absent' && result.repairCommitFailure) {
+    return surfaceUnrecoveredRepairCommitFailure(
+      response,
+      result.repairCommitFailure,
+      result.status === 'retained' ? result.error : undefined,
+    );
   }
   if (result.status === 'retained' && response?.ok) {
     return {
@@ -483,6 +487,7 @@ export async function cleanupDaemonAfterRequest(
 function surfaceUnrecoveredRepairCommitFailure(
   response: DaemonResponse | undefined,
   unrecovered: NonNullable<ReturnType<typeof findUnrecoveredRepairCommitFailure>>,
+  cleanupFailure?: NormalizedError,
 ): DaemonResponse {
   if (response && !response.ok) return response;
   const { sessionName, tombstone } = unrecovered;
@@ -492,7 +497,16 @@ function surfaceUnrecoveredRepairCommitFailure(
   const message =
     `The repair transaction for session "${sessionName}" completed, but committing its ` +
     `healed script failed at teardown: ${tombstone.commitFailure.message}. ${reRun}.`;
-  return { ok: false, error: normalizeError(new AppError('REPAIR_COMMIT_FAILED', message)) };
+  return {
+    ok: false,
+    error: normalizeError(
+      new AppError(
+        'REPAIR_COMMIT_FAILED',
+        message,
+        cleanupFailure ? { cleanupFailure } : undefined,
+      ),
+    ),
+  };
 }
 
 /**

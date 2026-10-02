@@ -270,6 +270,7 @@ export type DaemonRetirementInput = Readonly<{
   lockTimeoutMs?: number;
 }>;
 
+type RepairCommitFailure = NonNullable<ReturnType<typeof findUnrecoveredRepairCommitFailure>>;
 type ConfirmedDaemonTermination = Extract<DaemonTerminationResult, { status: 'exited' }>;
 export type DaemonRetirementResult =
   | Readonly<{
@@ -277,7 +278,7 @@ export type DaemonRetirementResult =
       termination: ConfirmedDaemonTermination;
       removedInfo: boolean;
       removedStateDir?: boolean;
-      repairCommitFailure?: NonNullable<ReturnType<typeof findUnrecoveredRepairCommitFailure>>;
+      repairCommitFailure?: RepairCommitFailure;
     }>
   | Readonly<{ status: 'absent'; removedInfo: false }>
   | Readonly<{
@@ -295,6 +296,7 @@ export type DaemonRetirementResult =
         | 'metadata-unreadable'
         | 'retirement-unconfirmed';
       error?: NormalizedError;
+      repairCommitFailure?: RepairCommitFailure;
     }>;
 
 /** Stops only the captured daemon lifetime, then retires its registration under the startup lock. */
@@ -311,12 +313,11 @@ export async function stopAndRetireDaemon(
     if (input.ownedStateDir) {
       owned = requirePrivateReplayState(input.ownedStateDir, input.paths);
       owned.sealed = true;
-      const launch = owned.startups.at(-1)?.launch;
-      if (
-        !launch?.startTime ||
-        launch.pid !== input.observed?.pid ||
-        launch.startTime !== input.observed.startTime
-      )
+      const launch = owned.startups.find(
+        ({ launch }) =>
+          launch.pid === input.observed?.pid && launch.startTime === input.observed?.startTime,
+      )?.launch;
+      if (!launch?.startTime)
         throw new AppError(
           'COMMAND_FAILED',
           'The observed daemon is not an owned startup lifetime.',

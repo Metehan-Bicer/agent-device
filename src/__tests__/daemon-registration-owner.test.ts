@@ -7,6 +7,7 @@ import {
   stopAndRetireDaemon,
   recoverAbandonedDaemonRegistration,
   createOwnedReplayStateDir,
+  DAEMON_STARTUP_EXIT_CODES,
   launchDaemonProcess,
   type OwnedReplayStateDir,
 } from '../daemon-registration-owner.ts';
@@ -331,9 +332,12 @@ test('private retirement closes startup admission, joins the actual child and ne
   const paths = ownedStateDir.paths;
   const args = registeredDaemonFixtureArgs(paths, fields);
   const launch = launchDaemonProcess({ paths, args, serverMode: 'socket', ownedStateDir });
+  let contender: ReturnType<typeof launchDaemonProcess> | undefined;
   try {
     assert.ok(launch.startTime);
     await waitForFixtureFile(paths.infoPath);
+    contender = launchDaemonProcess({ paths, args, serverMode: 'socket', ownedStateDir });
+    assert.equal((await contender.exited).exitCode, DAEMON_STARTUP_EXIT_CODES.busy);
     const input = {
       paths,
       observed: { pid: launch.pid, startTime: launch.startTime },
@@ -355,7 +359,7 @@ test('private retirement closes startup admission, joins the actual child and ne
     assert.deepEqual(await stopAndRetireDaemon(input), result);
     assert.equal(fs.existsSync(paths.baseDir), false);
   } finally {
-    await finishPrivateTestDaemons(paths, launch);
+    await finishPrivateTestDaemons(paths, launch, contender);
   }
 });
 
@@ -401,6 +405,8 @@ test('private retirement retains the directory while an earlier actual startup c
 
 for (const contents of [
   '{broken',
+  '{"owner":"default","expiresAt":1e400}',
+  '{"owner":"default","expiresAt":-1e400}',
   ...[false, null, 0, {}].map((commitFailure) =>
     JSON.stringify({ owner: 'default', expiresAt: Date.now() + 60_000, commitFailure }),
   ),

@@ -532,7 +532,6 @@ test('sendToDaemon prints a takeover notice before replacing an unreachable daem
 
   const stateDir = makeTempStateDir('agent-device-daemon-unreachable-takeover-');
   const paths = resolveDaemonPaths(stateDir);
-  // Bind fresh BEFORE freeing the port below: a later bind can reclaim it and skip the takeover.
   const freshDaemon = await startHttpDaemonFixture({ via: 'fresh-daemon' });
   const unreachable = await startHttpDaemonFixture({ via: 'unused' });
   await closeLoopbackServer(unreachable.server);
@@ -754,9 +753,6 @@ test('sendToDaemon does not replay over HTTP after the socket request is written
   }
 });
 
-// --- ADR 0012 decision 6, R7 (Fix 1, C1): a repair-armed `replay --save-script`
-// that comes back as a HELD divergence (the daemon's `resume.repairSessionHeld`
-// signal) must keep its owning (owned/ephemeral) daemon alive and addressable.
 // The keep-alive keys on that signal — the REPAIR-ARMED condition — NOT on
 // `resume.allowed`, which reports only plan-resumability. ---
 
@@ -908,75 +904,70 @@ test('sendToDaemon tears down an owned ephemeral daemon on an UNHELD divergence 
   }
 });
 
-// --- ADR 0012 decision 6 (BLOCKER 2, third follow-up): a one-shot
-// `replay --save-script` that completes with no divergence returns SUCCESS
-// immediately — the actual healed-script commit is deferred to daemon
-// teardown. If that deferred commit then fails, the daemon leaves a
-// REPAIR_COMMIT_FAILED tombstone in the owned state dir before exiting. The
-// client cleanup must discover it (after waiting for the daemon to actually
-// exit) BEFORE deleting the owned state dir, and must surface it in the
-// response the caller receives — never silently delete the only evidence of
-// the failure while reporting the success already computed for the replay
-// itself. ---
-
 test('BLOCKER 2 (third follow-up): a shutdown-time repair commit failure is surfaced and the owned state dir survives', async (t) => {
   if (!(await supportsLoopbackBind())) {
     t.skip('loopback listeners are not permitted in this environment');
     return;
   }
 
-  // The daemon's RPC response for the replay itself is a plain SUCCESS (the
-  // plan completed with no divergence) — exactly what a real daemon would
-  // return before its deferred, teardown-time commit has even attempted.
-  const daemon = await startHttpDaemonFixture({ session: 'default' });
-  let ownedStateDir = '';
-  installSpawnedHttpDaemonAtOwnedStateDir(daemon.port, (dir) => {
-    ownedStateDir = dir;
-    fs.writeFileSync(
-      path.join(dir, 'repair-on-shutdown.json'),
-      `${JSON.stringify({
-        owner: 'default',
-        reapedAt: Date.now(),
-        expiresAt: Date.now() + 60_000,
-        sourcePath: '/tmp/flow.ad',
-        commitFailure: {
-          code: 'COMMAND_FAILED',
-          message: 'a prior healed script already exists at /tmp/flow.healed.ad',
-        },
-      })}\n`,
-    );
-  });
-
-  try {
-    const response = await sendToDaemon({
-      session: 'default',
-      command: 'replay',
-      positionals: ['flow.ad'],
-      flags: { saveScript: true, daemonTransport: 'http' },
-      meta: { requestId: 'req-repair-commit-fail-teardown' },
+  for (const failRelease of [false, true]) {
+    const daemon = await startHttpDaemonFixture({ session: 'default' });
+    let ownedStateDir = '';
+    installSpawnedHttpDaemonAtOwnedStateDir(daemon.port, (dir) => {
+      ownedStateDir = dir;
+      fs.writeFileSync(
+        path.join(dir, 'repair-on-shutdown.json'),
+        `${JSON.stringify({
+          owner: 'default',
+          reapedAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+          sourcePath: '/tmp/flow.ad',
+          commitFailure: {
+            code: 'COMMAND_FAILED',
+            message: 'a prior healed script already exists at /tmp/flow.healed.ad',
+          },
+        })}\n`,
+      );
     });
 
-    // The client-visible response must surface the deferred commit failure —
-    // never the raw success the daemon returned for the replay itself, and
-    // never silently swallowed by cleanup.
-    assert.equal(response.ok, false);
-    if (response.ok) return;
-    assert.equal(response.error.code, 'REPAIR_COMMIT_FAILED');
-    assert.match(response.error.message, /a prior healed script already exists/);
-    assert.ok(response.error.message.includes('replay /tmp/flow.ad --save-script'));
+    const originalRmdir = fs.rmdirSync;
+    const releaseSpy = vi.spyOn(fs, 'rmdirSync').mockImplementation((target, options) => {
+      if (failRelease && target === resolveDaemonPaths(ownedStateDir).lockPath)
+        throw Object.assign(new Error('release failed'), { code: 'EBUSY' });
+      return originalRmdir(target, options);
+    });
+    try {
+      const response = await sendToDaemon({
+        session: 'default',
+        command: 'replay',
+        positionals: ['flow.ad'],
+        flags: { saveScript: true, daemonTransport: 'http' },
+        meta: { requestId: 'req-repair-commit-fail-teardown' },
+      });
 
-    // The owned state dir — and the tombstone evidence inside it — must
-    // survive: never rmSync'd while an unrecovered commit failure is on record.
-    assert.ok(ownedStateDir.length > 0);
-    assert.equal(fs.existsSync(ownedStateDir), true);
-    const ownedPaths = resolveDaemonPaths(ownedStateDir);
-    assert.equal(
-      fs.existsSync(path.join(ownedPaths.sessionsDir, 'default', 'repair-tombstone.json')),
-      true,
-    );
-  } finally {
-    await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
+      assert.equal(response.ok, false);
+      if (response.ok) return;
+      assert.equal(response.error.code, 'REPAIR_COMMIT_FAILED');
+      const secondary = response.error.details?.cleanupFailure as
+        | { details?: { ownerReleaseUnverified?: boolean }; hint?: string }
+        | undefined;
+      assert.equal(secondary?.details?.ownerReleaseUnverified, failRelease ? true : undefined);
+      if (failRelease) assert.match(secondary?.hint ?? '', /Restore process inspection/);
+      assert.match(response.error.message, /a prior healed script already exists/);
+      assert.ok(response.error.message.includes('replay /tmp/flow.ad --save-script'));
+
+      assert.ok(ownedStateDir.length > 0);
+      assert.equal(fs.existsSync(ownedStateDir), true);
+      const ownedPaths = resolveDaemonPaths(ownedStateDir);
+      assert.equal(
+        fs.existsSync(path.join(ownedPaths.sessionsDir, 'default', 'repair-tombstone.json')),
+        true,
+      );
+    } finally {
+      releaseSpy.mockRestore();
+      await closeLoopbackServer(daemon.server);
+      if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
+    }
   }
 });
 

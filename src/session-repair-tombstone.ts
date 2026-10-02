@@ -55,7 +55,7 @@ function parseRepairTombstone(raw: string, tombstonePath: string): RepairSession
   try {
     const parsed = JSON.parse(raw) as RepairSessionTombstone;
     if (
-      typeof parsed?.expiresAt !== 'number' ||
+      !Number.isFinite(parsed?.expiresAt) ||
       typeof parsed?.owner !== 'string' ||
       !validRepairCommitFailure(parsed.commitFailure)
     )
