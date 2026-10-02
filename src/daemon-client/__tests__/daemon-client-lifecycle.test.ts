@@ -6,6 +6,11 @@ import net from 'node:net';
 import path from 'node:path';
 import { afterEach, test, vi } from 'vitest';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
+import {
+  spawnRegisteredDaemonFixture,
+  finishRegisteredDaemonFixture,
+  finishRegisteredDaemonFixtures,
+} from '../../__tests__/test-utils/registered-daemon-fixture.ts';
 
 vi.mock('@agent-device/host-kit/command', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agent-device/host-kit/command')>()),
@@ -51,14 +56,19 @@ type DaemonInfoFixture = {
   processStartTime?: string;
 };
 
+const actualRetry = await vi.importActual<typeof import('@agent-device/host-kit/retry')>(
+  '@agent-device/host-kit/retry',
+);
 const mockRunCmdDetached = vi.mocked(runCmdDetachedMonitored);
 const mockRunCmdSync = vi.mocked(runCmdSync);
 const mockSleep = vi.mocked(sleep);
 
-afterEach(() => {
+afterEach(async () => {
+  await finishRegisteredDaemonFixtures();
   mockRunCmdDetached.mockReset();
   mockRunCmdSync.mockClear();
-  mockSleep.mockClear();
+  mockSleep.mockReset();
+  mockSleep.mockImplementation(async () => {});
   vi.unstubAllEnvs();
 });
 
@@ -147,16 +157,22 @@ function installSpawnedHttpDaemonAtOwnedStateDir(
   httpPort: number,
   onStateDir: (stateDir: string) => void,
 ): void {
+  mockSleep.mockImplementation(actualRetry.sleep);
   mockRunCmdDetached.mockImplementation((_command, _args, options) => {
     const ownedStateDir = String(options?.env?.AGENT_DEVICE_STATE_DIR);
     onStateDir(ownedStateDir);
     const ownedPaths = resolveDaemonPaths(ownedStateDir);
-    writeDaemonInfo(ownedPaths, { httpPort, transport: 'http' });
-    writeDaemonLock(ownedPaths, {
-      pid: process.pid,
-      processStartTime: readProcessStartTime(process.pid) ?? undefined,
-    });
-    return { pid: process.pid, exited: new Promise(() => {}) };
+    return spawnRegisteredDaemonFixture(
+      ownedPaths,
+      {
+        httpPort,
+        token: 'local-secret',
+        version: readVersion(),
+        codeOrigin: 'checkout',
+        codeSignature: currentDaemonCodeSignature(),
+      },
+      options,
+    );
   });
 }
 
@@ -813,7 +829,7 @@ test('sendToDaemon keeps an owned ephemeral daemon alive and hints its --state-d
     assert.equal(fs.existsSync(ownedStateDir), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -854,7 +870,7 @@ test('C1: keep-alive keys on repairSessionHeld, NOT resume.allowed — a HELD di
     assert.equal(fs.existsSync(ownedStateDir), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -888,7 +904,7 @@ test('sendToDaemon tears down an owned ephemeral daemon on an UNHELD divergence 
     assert.equal(fs.existsSync(ownedStateDir), false);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -916,16 +932,8 @@ test('BLOCKER 2 (third follow-up): a shutdown-time repair commit failure is surf
   let ownedStateDir = '';
   installSpawnedHttpDaemonAtOwnedStateDir(daemon.port, (dir) => {
     ownedStateDir = dir;
-    // Simulate the daemon's OWN shutdown handler (`finalizeRepairTeardown`)
-    // having already run and left a commit-failure tombstone before this
-    // fake process "exits" — the real ordering `stopDaemonProcessForTakeover`
-    // depends on (it waits for the process to exit, and the real daemon only
-    // exits after teardown finishes writing this file).
-    const ownedPaths = resolveDaemonPaths(dir);
-    const sessionDir = path.join(ownedPaths.sessionsDir, 'default');
-    fs.mkdirSync(sessionDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionDir, 'repair-tombstone.json'),
+      path.join(dir, 'repair-on-shutdown.json'),
       `${JSON.stringify({
         owner: 'default',
         reapedAt: Date.now(),
@@ -968,7 +976,7 @@ test('BLOCKER 2 (third follow-up): a shutdown-time repair commit failure is surf
     );
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1003,7 +1011,7 @@ test('continuation: sendToDaemon keeps the daemon alive on a held divergence eve
     assert.equal(fs.existsSync(ownedStateDir), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1131,7 +1139,7 @@ test('sendToDaemon keeps an owned ephemeral daemon alive and hints its --state-d
     assert.equal(fs.existsSync(ownedStateDir), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1170,7 +1178,7 @@ test('closes the loop: a follow-up sendToDaemon using the hinted --state-dir/--s
     assert.equal(daemon.rpcRequests[1]?.params?.command, 'press');
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1202,7 +1210,7 @@ test('sendToDaemon tears down an owned ephemeral daemon when replay reports the 
     assert.equal(fs.existsSync(ownedStateDir), false);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1248,7 +1256,7 @@ test('ADR 0012 R7 x ADR 0016: a completed --save-script repair also keeps its ow
     assert.equal(fs.existsSync(ownedStateDir), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });
 
@@ -1328,6 +1336,6 @@ test('sendToDaemon still tears down a `test` command owned ephemeral daemon even
     assert.equal(fs.existsSync(ownedStateDir), false);
   } finally {
     await closeLoopbackServer(daemon.server);
-    if (ownedStateDir) fs.rmSync(ownedStateDir, { recursive: true, force: true });
+    if (ownedStateDir) await finishRegisteredDaemonFixture(ownedStateDir);
   }
 });

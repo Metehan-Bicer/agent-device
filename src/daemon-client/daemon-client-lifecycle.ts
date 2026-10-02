@@ -1,17 +1,22 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
-import path from 'node:path';
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import { readReplayDivergenceResume } from '@agent-device/ad-replay/divergence';
 import type { DaemonRequest, DaemonResponse } from '../daemon/daemon-request.ts';
-import { runCmdDetachedMonitored, type ExecDetachedExit } from '@agent-device/host-kit/command';
+import { type ExecDetachedExit } from '@agent-device/host-kit/command';
 import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
-import { isProcessAlive, readProcessStartTime } from '@agent-device/host-kit/process';
+import { isProcessAlive } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
 
-import { findUnrecoveredRepairCommitFailure } from '../session-repair-tombstone.ts';
+import type { findUnrecoveredRepairCommitFailure } from '../session-repair-tombstone.ts';
+import {
+  createOwnedReplayStateDir,
+  launchDaemonProcess,
+  stopAndRetireDaemon,
+  type OwnedReplayStateDir,
+  type DaemonStartupLaunch,
+} from '../daemon-registration-owner.ts';
 import {
   resolveDaemonPaths,
   resolveDaemonServerMode,
@@ -36,7 +41,6 @@ import {
   readDaemonInfo,
   recoverDaemonLockHolder,
   removeDaemonInfo,
-  removeDaemonLock,
   resolveDaemonStartupHint,
   stopDaemonProcessForTakeover,
   type DaemonInfo,
@@ -52,7 +56,7 @@ export type DaemonClientSettings = {
   paths: DaemonPaths;
   transportPreference: DaemonTransportPreference;
   serverMode: DaemonServerMode;
-  ownedStateDir?: boolean;
+  ownedStateDir?: OwnedReplayStateDir;
   remoteBaseUrl?: string;
   remoteAuthToken?: string;
 };
@@ -60,13 +64,6 @@ export type DaemonClientSettings = {
 export type EnsuredDaemon = {
   info: DaemonInfo;
   startedByClient: boolean;
-};
-
-type DaemonStartupLaunch = {
-  pid: number;
-  /** The launched process's start time, so a reused pid is never taken for it. */
-  startTime?: string;
-  exited: Promise<ExecDetachedExit>;
 };
 
 type DaemonStartupWaitResult =
@@ -91,10 +88,11 @@ export function resolveClientSettings(
   const explicitStateDir = resolveExplicitStateDir(req);
   const remote = resolveRemoteClientSettings(req, suppliedAuthToken);
   const transport = resolveTransportClientSettings(req, remote.remoteBaseUrl);
-  const ownedStateDir = shouldUseOwnedReplayStateDir(req, explicitStateDir, remote.rawBaseUrl);
-  const stateDir = ownedStateDir ? createOwnedReplayStateDir() : explicitStateDir;
+  const ownedStateDir = shouldUseOwnedReplayStateDir(req, explicitStateDir, remote.rawBaseUrl)
+    ? createOwnedReplayStateDir()
+    : undefined;
   return {
-    paths: resolveDaemonPaths(stateDir),
+    paths: ownedStateDir?.paths ?? resolveDaemonPaths(explicitStateDir),
     transportPreference: transport.preference,
     serverMode: transport.serverMode,
     ownedStateDir,
@@ -151,10 +149,6 @@ function shouldUseOwnedReplayStateDir(
   rawRemoteBaseUrl: string | undefined,
 ): boolean {
   return isOneShotReplayCommand(req.command) && !explicitStateDir && !rawRemoteBaseUrl;
-}
-
-function createOwnedReplayStateDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-device-replay-daemon-'));
 }
 
 export async function ensureDaemon(settings: DaemonClientSettings): Promise<EnsuredDaemon> {
@@ -435,49 +429,40 @@ export async function cleanupDaemonAfterRequest(
     return response;
   }
 
-  const result = {
-    pid: daemon.info.pid,
-    removedInfo: false,
-    removedLock: false,
-    removedStateDir: false,
-    error: undefined as string | undefined,
-  };
-  let surfacedResponse = response;
-
-  try {
-    await stopDaemonProcessForTakeover(daemon.info);
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
-  } finally {
-    const infoExists = fs.existsSync(settings.paths.infoPath);
-    removeDaemonInfo(settings.paths.infoPath);
-    result.removedInfo = infoExists && !fs.existsSync(settings.paths.infoPath);
-
-    const lockExists = fs.existsSync(settings.paths.lockPath);
-    removeDaemonLock(settings.paths.lockPath);
-    result.removedLock = lockExists && !fs.existsSync(settings.paths.lockPath);
-
-    if (settings.ownedStateDir) {
-      // `stopDaemonProcessForTakeover` above waits for the (real) daemon
-      // process to actually exit, which only happens AFTER its shutdown
-      // handler finishes `finalizeRepairTeardown` for every session — so by
-      // now any commit-failure tombstone it would leave is already on disk.
-      const unrecovered = findUnrecoveredRepairCommitFailure(settings.paths.sessionsDir);
-      if (unrecovered) {
-        surfacedResponse = surfaceUnrecoveredRepairCommitFailure(response, unrecovered);
-      } else {
-        fs.rmSync(settings.paths.baseDir, { recursive: true, force: true });
-        result.removedStateDir = !fs.existsSync(settings.paths.baseDir);
-      }
-    }
-  }
-
-  emitDiagnostic({
-    level: result.error ? 'warn' : 'info',
-    phase: 'daemon_replay_cleanup',
-    data: result,
+  const result = await stopAndRetireDaemon({
+    paths: settings.paths,
+    observed: { pid: daemon.info.pid, startTime: daemon.info.processStartTime ?? null },
+    mode: 'graceful',
+    ownedStateDir: settings.ownedStateDir,
   });
-  return surfacedResponse;
+  emitDiagnostic({
+    level: result.status === 'retained' ? 'warn' : 'info',
+    phase: 'daemon_replay_cleanup',
+    data: { pid: daemon.info.pid, ...result },
+  });
+  if (result.status === 'retired' && result.repairCommitFailure) {
+    return surfaceUnrecoveredRepairCommitFailure(response, result.repairCommitFailure);
+  }
+  if (result.status === 'retained' && response?.ok) {
+    return {
+      ok: false,
+      error: normalizeError(
+        new AppError(
+          'COMMAND_FAILED',
+          'Replay completed, but daemon cleanup could not be confirmed.',
+          {
+            reason: 'daemon_retirement_unconfirmed',
+            retirement: result,
+            stateDir: settings.paths.baseDir,
+            hint:
+              result.error?.hint ??
+              `State and diagnostics were retained at ${settings.paths.baseDir}. Resolve the reported cleanup failure before retrying.`,
+          },
+        ),
+      ),
+    };
+  }
+  return response;
 }
 
 /**
@@ -669,28 +654,14 @@ function isLaunchedDaemon(info: DaemonInfo, launch: DaemonStartupLaunch): boolea
 
 function startDaemon(settings: DaemonClientSettings): DaemonStartupLaunch {
   const launchSpec = resolveDaemonLaunchSpec();
-  const args = launchSpec.useSrc
-    ? ['--experimental-strip-types', launchSpec.srcPath]
-    : [launchSpec.distPath];
-  const env = {
-    ...process.env,
-    AGENT_DEVICE_STATE_DIR: settings.paths.baseDir,
-    AGENT_DEVICE_DAEMON_SERVER_MODE: settings.serverMode,
-  };
-
-  fs.mkdirSync(settings.paths.baseDir, { recursive: true });
-  const stdoutFd = fs.openSync(settings.paths.logPath, 'a');
-  const stderrFd = fs.openSync(settings.paths.logPath, 'a');
-  try {
-    const launched = runCmdDetachedMonitored(process.execPath, args, {
-      env,
-      stdio: ['ignore', stdoutFd, stderrFd],
-    });
-    return { ...launched, startTime: readProcessStartTime(launched.pid) ?? undefined };
-  } finally {
-    fs.closeSync(stdoutFd);
-    fs.closeSync(stderrFd);
-  }
+  return launchDaemonProcess({
+    paths: settings.paths,
+    serverMode: settings.serverMode,
+    ownedStateDir: settings.ownedStateDir,
+    args: launchSpec.useSrc
+      ? ['--experimental-strip-types', launchSpec.srcPath]
+      : [launchSpec.distPath],
+  });
 }
 
 function describeDaemonEarlyExit(exit: ExecDetachedExit): string {

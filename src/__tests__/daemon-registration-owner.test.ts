@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { afterEach, test, vi } from 'vitest';
-import { readCurrentOwnerIdentity } from '@agent-device/host-kit/process';
+import { readCurrentOwnerIdentity, isProcessAlive } from '@agent-device/host-kit/process';
 import {
   tryAcquireDaemonRegistration,
   stopAndRetireDaemon,
   recoverAbandonedDaemonRegistration,
+  createOwnedReplayStateDir,
+  launchDaemonProcess,
+  type OwnedReplayStateDir,
 } from '../daemon-registration-owner.ts';
 import { resolveDaemonPaths, type DaemonPaths } from '../daemon-resolution.ts';
 import { readRegisteredDaemonOwnership } from '../daemon-registration.ts';
 import { readDaemonShutdownReport } from '../daemon-shutdown-report.ts';
 import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
+import { registeredDaemonFixtureArgs } from './test-utils/registered-daemon-fixture.ts';
+import { sleep } from '@agent-device/host-kit/retry';
+import { stopDaemonProcess } from '../daemon-process.ts';
 
 const fields = {
   socketPort: 4210,
@@ -305,3 +311,151 @@ test.skipIf(process.getuid?.() === 0)(
     }
   },
 );
+
+test('a forged private-directory capability cannot authorize even matching dead metadata removal', async () => {
+  const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-private-forgery-'));
+  replaceInfo(paths, deadIdentity.pid, deadIdentity.startTime);
+  const before = fs.readFileSync(paths.infoPath, 'utf8');
+  const result = await stopAndRetireDaemon({
+    paths,
+    observed: deadIdentity,
+    mode: 'force',
+    ownedStateDir: Object.freeze({ paths }) as OwnedReplayStateDir,
+  });
+  assert.equal(result.status, 'retained');
+  assert.equal(fs.readFileSync(paths.infoPath, 'utf8'), before);
+});
+
+test('private retirement closes startup admission, joins the actual child and never recreates a removed directory', async () => {
+  const ownedStateDir = createOwnedReplayStateDir();
+  const paths = ownedStateDir.paths;
+  const args = registeredDaemonFixtureArgs(paths, fields);
+  const launch = launchDaemonProcess({ paths, args, serverMode: 'socket', ownedStateDir });
+  try {
+    assert.ok(launch.startTime);
+    await waitForFixtureFile(paths.infoPath);
+    const input = {
+      paths,
+      observed: { pid: launch.pid, startTime: launch.startTime },
+      mode: 'graceful' as const,
+      ownedStateDir,
+    };
+    const pending = stopAndRetireDaemon(input);
+    assert.throws(
+      () => launchDaemonProcess({ paths, args, serverMode: 'socket', ownedStateDir }),
+      (error: { details?: { reason?: string } }) =>
+        error.details?.reason === 'daemon_startup_admission_closed',
+    );
+    const result = await pending;
+    assert.equal(result.status, 'retired', JSON.stringify(result));
+    if (result.status !== 'retired') assert.fail('retirement not confirmed');
+    assert.equal(result.removedStateDir, true);
+    assert.equal((await launch.exited).exitCode, 0);
+    assert.equal(fs.existsSync(paths.baseDir), false);
+    assert.deepEqual(await stopAndRetireDaemon(input), result);
+    assert.equal(fs.existsSync(paths.baseDir), false);
+  } finally {
+    await finishPrivateTestDaemons(paths, launch);
+  }
+});
+
+test('private retirement retains the directory while an earlier actual startup child is still paused', async () => {
+  const ownedStateDir = createOwnedReplayStateDir();
+  const paths = ownedStateDir.paths;
+  const args = registeredDaemonFixtureArgs(paths, fields);
+  const entry = args[1]!;
+  const ready = `${paths.baseDir}/paused-startup.ready`;
+  fs.writeFileSync(
+    entry,
+    `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000);`,
+  );
+  const first = launchDaemonProcess({ paths, args, serverMode: 'socket', ownedStateDir });
+  let second: ReturnType<typeof launchDaemonProcess> | undefined;
+  try {
+    await waitForFixtureFile(ready);
+    second = launchDaemonProcess({
+      paths,
+      args: registeredDaemonFixtureArgs(paths, fields),
+      serverMode: 'socket',
+      ownedStateDir,
+    });
+    await waitForFixtureFile(paths.infoPath);
+    const result = await stopAndRetireDaemon({
+      paths,
+      observed: { pid: second.pid, startTime: second.startTime ?? null },
+      mode: 'graceful',
+      ownedStateDir,
+      startupJoinTimeoutMs: 0,
+    });
+    assert.equal(result.status, 'retained', JSON.stringify(result));
+    if (result.status !== 'retained') assert.fail('private state unexpectedly retired');
+    assert.equal(result.reason, 'startup-unconfirmed');
+    assert.equal(result.termination?.status, 'exited');
+    assert.equal(fs.existsSync(paths.baseDir), true);
+    assert.equal(isProcessAlive(first.pid), true);
+    assert.equal((await second.exited).exitCode, 0);
+  } finally {
+    await finishPrivateTestDaemons(paths, first, second);
+  }
+});
+
+for (const contents of [
+  '{broken',
+  ...[false, null, 0, {}].map((commitFailure) =>
+    JSON.stringify({ owner: 'default', expiresAt: Date.now() + 60_000, commitFailure }),
+  ),
+]) {
+  test(`malformed repair evidence (${contents}) retains private state after the actual child has exited`, async () => {
+    const ownedStateDir = createOwnedReplayStateDir();
+    const paths = ownedStateDir.paths;
+    const sessionDir = `${paths.sessionsDir}/default`;
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const evidencePath = `${sessionDir}/repair-tombstone.json`;
+    fs.writeFileSync(evidencePath, contents);
+    const launch = launchDaemonProcess({
+      paths,
+      args: registeredDaemonFixtureArgs(paths, fields),
+      serverMode: 'socket',
+      ownedStateDir,
+    });
+    try {
+      await waitForFixtureFile(paths.infoPath);
+      const result = await stopAndRetireDaemon({
+        paths,
+        observed: { pid: launch.pid, startTime: launch.startTime ?? null },
+        mode: 'graceful',
+        ownedStateDir,
+      });
+      assert.equal(result.status, 'retained', JSON.stringify(result));
+      if (result.status !== 'retained') assert.fail('repair evidence unexpectedly discarded');
+      assert.equal(result.termination?.status, 'exited');
+      assert.equal(result.error?.details?.reason, 'repair_evidence_invalid');
+      assert.equal(fs.readFileSync(evidencePath, 'utf8'), contents);
+      await launch.exited;
+    } finally {
+      await finishPrivateTestDaemons(paths, launch);
+    }
+  });
+}
+
+async function waitForFixtureFile(filePath: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!fs.existsSync(filePath) && Date.now() < deadline) await sleep(20);
+  assert.equal(fs.existsSync(filePath), true);
+}
+
+async function finishPrivateTestDaemons(
+  paths: DaemonPaths,
+  ...launches: (ReturnType<typeof launchDaemonProcess> | undefined)[]
+): Promise<void> {
+  for (const launch of launches) {
+    if (!launch) continue;
+    const termination = await stopDaemonProcess(
+      { pid: launch.pid, startTime: launch.startTime ?? null },
+      { mode: 'force', termTimeoutMs: 0, killTimeoutMs: 2_000 },
+    );
+    assert.notEqual(termination.status, 'retained', JSON.stringify(termination));
+    await launch.exited;
+  }
+  fs.rmSync(paths.baseDir, { recursive: true, force: true });
+}
