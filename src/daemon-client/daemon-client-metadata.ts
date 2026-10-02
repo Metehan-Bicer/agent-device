@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import { AppError } from '@agent-device/kernel/errors';
 import { shellQuote } from '@agent-device/kernel/device-shell';
-import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import {
   isAgentDeviceDaemonProcess,
   stopDaemonProcess,
@@ -42,19 +41,6 @@ type DaemonLockInfo = {
 export type DaemonMetadataState = {
   hasInfo: boolean;
   hasLock: boolean;
-};
-
-type DaemonStartupCleanupReason = 'start_error' | 'startup_timeout';
-
-export type DaemonStartupCleanupResult = {
-  reason: DaemonStartupCleanupReason;
-  removedInfo: boolean;
-  removedLock: boolean;
-  stoppedInfoProcess: boolean;
-  stoppedLockProcess: boolean;
-  retainedInfoProcess?: boolean;
-  retainedLockProcess?: boolean;
-  error?: string;
 };
 
 const DAEMON_TAKEOVER_TERM_TIMEOUT_MS = 3000;
@@ -161,98 +147,11 @@ export function cleanupStaleDaemonLockIfSafe(paths: DaemonPaths): void {
   removeDaemonLock(paths.lockPath);
 }
 
-export async function cleanupFailedDaemonStartupMetadata(
-  paths: DaemonPaths,
-  reason: DaemonStartupCleanupReason,
-  options: { stopLiveProcesses?: boolean } = {},
-): Promise<DaemonStartupCleanupResult> {
-  const stopLiveProcesses = options.stopLiveProcesses ?? true;
-  const result: DaemonStartupCleanupResult = {
-    reason,
-    removedInfo: false,
-    removedLock: false,
-    stoppedInfoProcess: false,
-    stoppedLockProcess: false,
-  };
-
-  try {
-    const infoExists = fs.existsSync(paths.infoPath);
-    const info = readDaemonInfo(paths.infoPath);
-    if (info) {
-      const liveInfoProcess = isAgentDeviceDaemonProcess(info.pid, info.processStartTime);
-      if (liveInfoProcess && !stopLiveProcesses) {
-        result.retainedInfoProcess = true;
-      } else {
-        if (liveInfoProcess) {
-          await stopDaemonProcessForTakeover(info);
-          result.stoppedInfoProcess = true;
-        }
-        removeDaemonInfo(paths.infoPath);
-        result.removedInfo = true;
-      }
-    } else if (infoExists) {
-      removeDaemonInfo(paths.infoPath);
-      result.removedInfo = true;
-    }
-
-    const lockExists = fs.existsSync(paths.lockPath);
-    const lockInfo = readDaemonLockInfo(paths.lockPath);
-    if (lockInfo) {
-      const liveLockProcess = isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime);
-      if (liveLockProcess && !stopLiveProcesses) {
-        result.retainedLockProcess = true;
-      } else {
-        if (liveLockProcess) {
-          const termination = await stopDaemonProcess(
-            { pid: lockInfo.pid, startTime: lockInfo.processStartTime ?? null },
-            {
-              mode: 'graceful',
-              termTimeoutMs: DAEMON_TAKEOVER_TERM_TIMEOUT_MS,
-              killTimeoutMs: DAEMON_TAKEOVER_KILL_TIMEOUT_MS,
-            },
-          );
-          requireDaemonExit(termination);
-          result.stoppedLockProcess = true;
-        }
-        removeDaemonLock(paths.lockPath);
-        result.removedLock = true;
-      }
-    } else if (lockExists) {
-      removeDaemonLock(paths.lockPath);
-      result.removedLock = true;
-    }
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
-  }
-
-  emitDiagnostic({
-    level: result.error ? 'warn' : 'info',
-    phase: 'daemon_startup_metadata_cleanup',
-    data: result,
-  });
-  return result;
-}
-
 export function getDaemonMetadataState(paths: DaemonPaths): DaemonMetadataState {
   return {
     hasInfo: fs.existsSync(paths.infoPath),
     hasLock: fs.existsSync(paths.lockPath),
   };
-}
-
-export async function recoverDaemonLockHolder(paths: DaemonPaths): Promise<boolean> {
-  const state = getDaemonMetadataState(paths);
-  if (!state.hasLock || state.hasInfo) return false;
-  const lockInfo = readDaemonLockInfo(paths.lockPath);
-  if (!lockInfo) {
-    removeDaemonLock(paths.lockPath);
-    return true;
-  }
-  if (!isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime)) {
-    removeDaemonLock(paths.lockPath);
-    return true;
-  }
-  return false;
 }
 
 export async function stopDaemonProcessForTakeover(

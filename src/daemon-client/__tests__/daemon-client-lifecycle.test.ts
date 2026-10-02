@@ -314,7 +314,7 @@ function mockSocketErrorAfterWrite(failingPort: number): {
   };
 }
 
-test('sendToDaemon retries daemon spawn failures and cleans partial metadata on terminal failure', async () => {
+test('sendToDaemon retains unknown metadata after a spawn failure', async () => {
   const stateDir = makeTempStateDir('agent-device-daemon-spawn-retry-');
   const paths = resolveDaemonPaths(stateDir);
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', stateDir);
@@ -345,25 +345,17 @@ test('sendToDaemon retries daemon spawn failures and cleans partial metadata on 
 
     assert.ok(thrown instanceof AppError);
     assert.equal(thrown.message, 'Failed to start daemon');
-    assert.equal(thrown.details?.startError, 'spawn failed 2');
-    assert.equal(thrown.details?.startupAttempts, 2);
-    const cleanupResults = thrown.details?.cleanupResults;
-    assert.ok(Array.isArray(cleanupResults));
-    assert.deepEqual(
-      cleanupResults.map((result) => ({
-        reason: result.reason,
-        removedInfo: result.removedInfo,
-        removedLock: result.removedLock,
-      })),
-      [
-        { reason: 'start_error', removedInfo: true, removedLock: true },
-        { reason: 'start_error', removedInfo: true, removedLock: true },
-      ],
-    );
-    assert.equal(attempts, 2);
-    assert.equal(mockSleep.mock.calls[0]?.[0], 150);
-    assert.equal(fs.existsSync(paths.infoPath), false);
-    assert.equal(fs.existsSync(paths.lockPath), false);
+    assert.equal(fs.readFileSync(paths.infoPath, 'utf8'), '{"partial":true}\n');
+    assert.equal(fs.readFileSync(paths.lockPath, 'utf8'), 'not-json\n');
+    assert.equal(thrown.details?.startError, 'spawn failed 1');
+    assert.equal(thrown.details?.startupAttempts, 1);
+    const results = thrown.details?.cleanupResults as Array<{
+      status: string;
+      removedInfo: boolean;
+    }>;
+    assert.equal(results[0]?.status, 'retained');
+    assert.equal(results[0]?.removedInfo, false);
+    assert.equal(attempts, 1);
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }

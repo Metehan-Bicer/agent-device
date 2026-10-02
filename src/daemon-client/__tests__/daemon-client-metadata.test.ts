@@ -5,10 +5,12 @@ import path from 'node:path';
 import { afterEach, test, vi } from 'vitest';
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
-import { tryAcquireDaemonRegistration } from '../../daemon-registration-owner.ts';
+import {
+  stopAndRetireDaemon,
+  tryAcquireDaemonRegistration,
+} from '../../daemon-registration-owner.ts';
 import {
   readDaemonInfo,
-  cleanupFailedDaemonStartupMetadata,
   stopDaemonProcessForTakeover,
   type DaemonInfo,
 } from '../daemon-client-metadata.ts';
@@ -81,13 +83,15 @@ for (const artifact of ['daemon.json', 'daemon.lock']) {
     fs.writeFileSync(file, contents);
     vi.mocked(isAgentDeviceDaemonProcess).mockReturnValue(true);
     vi.mocked(stopDaemonProcess).mockResolvedValue({ status: 'retained', reason: 'exit-timeout' });
-    const result = await cleanupFailedDaemonStartupMetadata(paths, 'start_error');
+    const result = await stopAndRetireDaemon({
+      paths,
+      observed: { pid: 7, startTime: 'start' },
+      mode: 'graceful',
+    });
     assert.equal(fs.readFileSync(file, 'utf8'), contents);
     assert.equal(result.removedInfo, false);
-    assert.equal(result.removedLock, false);
-    assert.equal(result.stoppedInfoProcess, false);
-    assert.equal(result.stoppedLockProcess, false);
-    assert.match(result.error ?? '', /exit could not be confirmed/);
+    assert.equal(result.status, 'retained');
+    if (result.status === 'retained') assert.equal(result.reason, 'exit-unconfirmed');
   });
 }
 

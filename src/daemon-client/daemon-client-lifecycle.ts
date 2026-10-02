@@ -8,10 +8,13 @@ import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { isProcessAlive } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
+import { inspectProcessLock } from '@agent-device/host-kit/file';
 
 import type { findUnrecoveredRepairCommitFailure } from '../session-repair-tombstone.ts';
 import {
   createOwnedReplayStateDir,
+  recoverAbandonedDaemonRegistration,
+  type DaemonRetirementResult,
   launchDaemonProcess,
   stopAndRetireDaemon,
   type OwnedReplayStateDir,
@@ -33,18 +36,15 @@ import {
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 
 import {
-  cleanupFailedDaemonStartupMetadata,
   cleanupStaleDaemonLockIfSafe,
   getDaemonMetadataState,
   isDaemonLockHeldByAnotherDaemon,
   isRemoteDaemon,
   readDaemonInfo,
-  recoverDaemonLockHolder,
   removeDaemonInfo,
   resolveDaemonStartupHint,
   stopDaemonProcessForTakeover,
   type DaemonInfo,
-  type DaemonStartupCleanupResult,
 } from './daemon-client-metadata.ts';
 import {
   canConnect,
@@ -297,65 +297,27 @@ function emitDaemonTakeoverNotice(info: DaemonInfo, reason: string, stateDir: st
   }
 }
 
+type FailedDaemonStartup = {
+  cleanup: DaemonRetirementResult;
+  startError?: string;
+  daemonProcess?: ExecDetachedExit | { pid: number };
+  retry: boolean;
+};
+
 async function startLocalDaemon(settings: DaemonClientSettings): Promise<EnsuredDaemon> {
-  let lockRecoveryCount = 0;
-  const cleanupResults: DaemonStartupCleanupResult[] = [];
-  let startError: string | undefined;
-  let daemonProcess: ExecDetachedExit | { pid: number } | undefined;
-  for (let attempt = 1; attempt <= DAEMON_STARTUP_ATTEMPTS; attempt += 1) {
-    let launch: DaemonStartupLaunch;
-    try {
-      launch = startDaemon(settings);
-      daemonProcess = { pid: launch.pid };
-    } catch (error) {
-      startError = error instanceof Error ? error.message : String(error);
-      cleanupResults.push(await cleanupFailedDaemonStartupMetadata(settings.paths, 'start_error'));
-      if (attempt < DAEMON_STARTUP_ATTEMPTS) {
-        await sleep(150);
-        continue;
-      }
-      break;
-    }
-
-    const startup = await waitForDaemonStartup(DAEMON_STARTUP_TIMEOUT_MS, settings, launch);
-    if (startup.kind === 'ready') return startup.daemon;
-    if (startup.kind === 'early_exit') {
-      daemonProcess = startup.exit;
-      startError = describeDaemonEarlyExit(startup.exit);
-      cleanupResults.push(await cleanupFailedDaemonStartupMetadata(settings.paths, 'start_error'));
-      if (attempt < DAEMON_STARTUP_ATTEMPTS) {
-        await sleep(150);
-        continue;
-      }
-      break;
-    }
-
-    if (await recoverDaemonLockHolder(settings.paths)) {
-      lockRecoveryCount += 1;
-      continue;
-    }
-
-    const metadataState = getDaemonMetadataState(settings.paths);
-    const hasAnotherAttempt = attempt < DAEMON_STARTUP_ATTEMPTS;
-    const cleanup = await cleanupFailedDaemonStartupMetadata(settings.paths, 'startup_timeout', {
-      stopLiveProcesses: false,
-    });
-    cleanupResults.push(cleanup);
-    if (cleanup.retainedInfoProcess || cleanup.retainedLockProcess) {
-      const extended = await waitForDaemonStartup(DAEMON_STARTUP_TIMEOUT_MS, settings, launch);
-      if (extended.kind === 'ready') return extended.daemon;
-      if (extended.kind === 'early_exit') {
-        daemonProcess = extended.exit;
-        startError = describeDaemonEarlyExit(extended.exit);
-      }
-      break;
-    }
-    if (!hasAnotherAttempt) break;
-
-    // Detached daemon startup can race on busy CI hosts; retry when no metadata exists yet.
-    if (!metadataState.hasInfo && !metadataState.hasLock) await sleep(150);
+  const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
+  const cleanupResults: DaemonRetirementResult[] = [];
+  let failure: FailedDaemonStartup | undefined;
+  let attempts = 0;
+  while (attempts < DAEMON_STARTUP_ATTEMPTS && Date.now() < deadline) {
+    attempts += 1;
+    const result = await attemptLocalDaemonStartup(settings, deadline);
+    if ('daemon' in result) return result.daemon;
+    failure = result;
+    cleanupResults.push(result.cleanup);
+    if (!result.retry) break;
+    await sleep(Math.min(150, Math.max(0, deadline - Date.now())));
   }
-
   const state = getDaemonMetadataState(settings.paths);
   const daemonLogTail = readRecentLogTail(settings.paths.logPath);
   throw new AppError('COMMAND_FAILED', 'Failed to start daemon', {
@@ -365,15 +327,55 @@ async function startLocalDaemon(settings: DaemonClientSettings): Promise<Ensured
     lockPath: settings.paths.lockPath,
     logPath: settings.paths.logPath,
     startupTimeoutMs: DAEMON_STARTUP_TIMEOUT_MS,
-    startupAttempts: DAEMON_STARTUP_ATTEMPTS,
-    lockRecoveryCount,
+    startupAttempts: attempts,
     cleanupResults,
-    startError,
-    daemonProcess,
+    startError: failure?.startError,
+    daemonProcess: failure?.daemonProcess,
     ...(daemonLogTail ? { daemonLogTail } : {}),
     metadataState: state,
     hint: resolveDaemonStartupHint(state, settings.paths),
   });
+}
+
+async function attemptLocalDaemonStartup(
+  settings: DaemonClientSettings,
+  deadline: number,
+): Promise<{ daemon: EnsuredDaemon } | FailedDaemonStartup> {
+  let launch: DaemonStartupLaunch;
+  try {
+    launch = startDaemon(settings);
+  } catch (error) {
+    const cleanup = await recoverAbandonedDaemonRegistration({
+      paths: settings.paths,
+      observed: null,
+      lockTimeoutMs: 0,
+    });
+    return {
+      cleanup,
+      startError: normalizeError(error).message,
+      retry: cleanup.status !== 'retained',
+    };
+  }
+  const startup = await waitForDaemonStartup(Math.max(0, deadline - Date.now()), settings, launch);
+  if (startup.kind === 'ready') return { daemon: startup.daemon };
+  const cleanup = await stopAndRetireDaemon({
+    paths: settings.paths,
+    observed: { pid: launch.pid, startTime: launch.startTime ?? null },
+    mode: 'graceful',
+    lockTimeoutMs: 0,
+  });
+  const inspection = inspectProcessLock(settings.paths.lockPath);
+  const available =
+    inspection.state === 'absent' ||
+    (inspection.state === 'held' &&
+      (inspection.liveness === 'owner-process-dead' ||
+        inspection.liveness === 'owner-process-reused'));
+  return {
+    cleanup,
+    retry: startup.kind === 'early_exit' && available,
+    startError: startup.kind === 'early_exit' ? describeDaemonEarlyExit(startup.exit) : undefined,
+    daemonProcess: startup.kind === 'early_exit' ? startup.exit : { pid: launch.pid },
+  };
 }
 
 /**

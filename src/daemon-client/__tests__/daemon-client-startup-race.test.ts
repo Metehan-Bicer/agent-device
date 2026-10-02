@@ -200,7 +200,7 @@ test('a start race won by an older daemon replaces it instead of adopting it', a
       }),
     );
     assert.equal(fixture.rpcRequests.length, 0);
-    assert.equal(launches, 2);
+    assert.equal(launches, 1);
     assert.match(
       String(stderr.mock.calls.flat().join('')),
       /Replacing daemon \(pid 43300, v0\.0\.1\)/,
