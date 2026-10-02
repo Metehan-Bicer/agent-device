@@ -9,7 +9,7 @@
 <script defer src="/agent-device/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/static/js/index.08305ebcf6.js"></script>
+<script defer src="/agent-device/static/js/index.b4879ee5c1.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -82,7 +82,7 @@
 <li><code>.aab</code> requires <code>bundletool</code> in <code>PATH</code>, or <code>AGENT_DEVICE_BUNDLETOOL_JAR=&lt;absolute-path-to-bundletool-all.jar&gt;</code> with <code>java</code> in <code>PATH</code>.</li>
 <li><code>.aab</code> installs use bundletool <code>build-apks --mode universal</code>.</li>
 <li><code>.ipa</code> installs extract <code>Payload/*.app</code>; if multiple app bundles exist, <code>&lt;app&gt;</code> selects the target by bundle id or bundle name.</li>
-<li>Use <code>install-from-source</code> for existing artifact URLs, including direct Android <code>.apk</code>/<code>.aab</code> URLs and trusted archives with one installable artifact. Use <code>install-from-source --github-actions-artifact &lt;owner/repo:artifact&gt;</code> for daemon-resolved GitHub Actions artifacts.</li>
+<li>Use <code>install-from-source</code> for existing artifact URLs, including direct Android <code>.apk</code>/<code>.aab</code> and iOS <code>.ipa</code> URLs, and archives with one installable artifact. Use <code>install-from-source --github-actions-artifact &lt;owner/repo:artifact&gt;</code> for daemon-resolved GitHub Actions artifacts.</li>
 </ul>
 <p>If <code>open</code> fails because no booted simulator/emulator/device is available, run <code>boot --platform ios|android</code> and retry.
 If <code>open</code> fails because the app id is wrong or missing, run <code>apps</code> and retry with the discovered package or bundle id instead of guessing.</p>
