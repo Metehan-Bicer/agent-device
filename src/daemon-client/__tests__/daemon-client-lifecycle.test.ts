@@ -753,9 +753,6 @@ test('sendToDaemon does not replay over HTTP after the socket request is written
   }
 });
 
-// The keep-alive keys on that signal — the REPAIR-ARMED condition — NOT on
-// `resume.allowed`, which reports only plan-resumability. ---
-
 function heldDivergenceError(
   resume: Record<string, unknown> = { allowed: true, from: 3, planDigest: 'digest-abc' },
 ): Record<string, unknown> {
@@ -817,8 +814,6 @@ test('sendToDaemon keeps an owned ephemeral daemon alive and hints its --state-d
     assert.match(String(response.error.hint), /--state-dir/);
     assert.ok(String(response.error.hint).includes(ownedStateDir));
 
-    // The daemon was NOT torn down: metadata and the owned state dir itself
-    // are still on disk, addressable by a follow-up command's --state-dir.
     const ownedPaths = resolveDaemonPaths(ownedStateDir);
     assert.equal(fs.existsSync(ownedPaths.infoPath), true);
     assert.equal(fs.existsSync(ownedPaths.lockPath), true);
@@ -835,8 +830,6 @@ test('C1: keep-alive keys on repairSessionHeld, NOT resume.allowed — a HELD di
     return;
   }
 
-  // resume.allowed:false (plan not resumable), but the daemon still HELD the
-  // repair session — the agent must be able to reach it to close/inspect.
   const daemon = await startHttpDaemonErrorFixture(
     heldDivergenceError({
       allowed: false,
@@ -895,8 +888,6 @@ test('sendToDaemon tears down an owned ephemeral daemon on an UNHELD divergence 
     if (response.ok) return;
     assert.equal(response.error.hint, undefined);
     assert.ok(ownedStateDir.length > 0);
-    // No held signal (`resume.allowed:true` alone is not the keep-alive key) —
-    // ordinary one-shot teardown still applies.
     assert.equal(fs.existsSync(ownedStateDir), false);
   } finally {
     await closeLoopbackServer(daemon.server);
@@ -945,14 +936,13 @@ test('BLOCKER 2 (third follow-up): a shutdown-time repair commit failure is surf
         meta: { requestId: 'req-repair-commit-fail-teardown' },
       });
 
-      assert.equal(response.ok, false);
-      if (response.ok) return;
+      assert.ok(!response.ok);
       assert.equal(response.error.code, 'REPAIR_COMMIT_FAILED');
       const secondary = response.error.details?.cleanupFailure as
         | { details?: { ownerReleaseUnverified?: boolean }; hint?: string }
         | undefined;
-      assert.equal(secondary?.details?.ownerReleaseUnverified, failRelease ? true : undefined);
-      if (failRelease) assert.match(secondary?.hint ?? '', /Restore process inspection/);
+      assert.equal(Boolean(secondary?.details?.ownerReleaseUnverified), failRelease);
+      assert.equal(Boolean(secondary?.hint?.startsWith('Restore process inspection')), failRelease);
       assert.match(response.error.message, /a prior healed script already exists/);
       assert.ok(response.error.message.includes('replay /tmp/flow.ad --save-script'));
 
