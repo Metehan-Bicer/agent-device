@@ -486,7 +486,7 @@ function makeContext(
     createdAt: Date.now(),
     actions: [],
   };
-  sessionStore.set(sessionName, session);
+  sessionStore.publish(sessionName, session);
   const resourcePath = appLogResourceStore.resolvePath(sessionStore.resolveSessionDir(sessionName));
   return {
     admissionLedger: createAppLogAdmissionLedger(),
