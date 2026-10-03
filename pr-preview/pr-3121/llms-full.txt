@@ -3771,7 +3771,7 @@ agent-device plugins update @example/agent-device-provider
 agent-device plugins remove @example/agent-device-provider
 ```
 
-Use a full npm package name, optionally with `@version` or `@tag`. `update` preserves valid constraints and options, including when repairing a damaged selection. Run `add` again to change the constraint.
+Use a full npm package name, optionally with `@version` or `@tag`. `update` preserves valid constraints and options, including when repairing a damaged selection. Run `add <package>@<version-or-tag>` to change it, or `add <package>` without a suffix to remove it.
 
 Each installation has an npm project and lockfile under `AGENT_DEVICE_HOME` (default `~/.agent-device`), selected in its `config.json`. Other settings are preserved. Project config and `--config` cannot select plugins. This home is independent of `--state-dir` and `AGENT_DEVICE_STATE_DIR`.
 
@@ -3786,13 +3786,7 @@ Compatibility checks run offline using local metadata; provider operations may r
 The interface is experimental. Publish this declaration in your package manifest:
 
 ```json
-{
-  "agentDevicePlugin": {
-    "apiVersion": 1,
-    "provider": "example",
-    "entry": "./dist/plugin.mjs"
-  }
-}
+{"agentDevicePlugin": {"apiVersion": 1, "provider": "example", "entry": "./dist/plugin.mjs"}}
 ```
 
 Use `agent-device` as a development dependency. The entry exports a default factory typed as `ProviderPlugin` from `agent-device/plugins`. It receives `env`, package-specific `options`, and `createError` for host-recognized errors, and returns `{ runtime, platformModule }` declaring the manifest's provider ID. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
