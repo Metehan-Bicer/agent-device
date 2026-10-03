@@ -93,6 +93,8 @@ Supported public entry points for Node consumers:
   - `runtime.getDeviceSession(device)`
   - types: `LimrunRuntimeOptions`, `LimrunDeviceSession`, `LimrunAndroidDeviceSession`,
     `LimrunIosDeviceSession`, `LimrunIosCommandExecution`
+- `agent-device/plugins`
+  - experimental types: `ProviderPlugin`, `ProviderPluginHost`, `ProviderPluginRegistration`; see [provider plugins](/agent-device/pr-preview/pr-3121/docs/plugins.md).
 - `agent-device/ai-sdk`
   - `createAgentDeviceTools(options)`
   - types: `AgentDeviceToolSet`, `AgentDeviceTools`, `CreateAgentDeviceToolsOptions`

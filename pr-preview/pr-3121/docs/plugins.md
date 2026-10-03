@@ -1,6 +1,6 @@
 # Provider plugins
 
-Install optional providers with `agent-device plugins`. npm must be available on the host:
+Install optional providers with npm available on your host:
 
 ```bash
 agent-device plugins add @example/agent-device-provider
@@ -9,69 +9,32 @@ agent-device plugins update @example/agent-device-provider
 agent-device plugins remove @example/agent-device-provider
 ```
 
-Use a full npm package name. To constrain upgrades, add `@version` or `@tag` to the package name.
-`update` keeps that constraint; run `add` again to change or remove it.
+Use a full npm package name, optionally with `@version` or `@tag`. `update` preserves valid constraints and options, including when repairing a damaged selection. Run `add` again to change the constraint.
 
-Plugins are installed under `AGENT_DEVICE_HOME`, which defaults to `~/.agent-device`. Each
-installation has its own npm project and lockfile. The CLI records its selection in that home's
-`config.json`, preserving other settings. This home is independent of `--state-dir` and
-`AGENT_DEVICE_STATE_DIR`. Project config and `--config` do not select executable plugins.
+Each installation has an npm project and lockfile under `AGENT_DEVICE_HOME` (default `~/.agent-device`), selected in its `config.json`. Other settings are preserved. Project config and `--config` cannot select plugins. This home is independent of `--state-dir` and `AGENT_DEVICE_STATE_DIR`.
 
-Installs disable npm lifecycle scripts; plugins must publish ready-to-run JavaScript and assets.
-Use trusted packages: their factory runs with the daemon's host permissions and environment.
+Installs disable lifecycle scripts: packages must contain ready-to-run JavaScript and assets. Use trusted packages; factories receive the daemon's host permissions and environment.
 
-An update validates the new package before selecting it. Failed installs leave the previous
-selection intact. Existing daemons keep their original plugin set and files. Close active
-sessions, then run `agent-device daemon stop` with the appropriate `--state-dir`; the next device
-command starts a daemon with the new set. Removed installations remain on disk for existing
-daemons.
-Use separate daemon state directories when running different plugin homes; reusing a daemon also
-reuses its original home and plugin set.
+Failed installs keep the previous selection. Existing daemons retain their plugin set and files, including removed installations. Close sessions and run `agent-device daemon stop` with the appropriate `--state-dir`; the next device command uses the new set. Use separate state directories for different plugin homes.
 
-Compatibility checks read local metadata without contacting npm. Compatible plugins work offline.
-An incompatible plugin refuses daemon startup; `plugins list --json` reports its error. Update
-or remove that plugin to recover. This first release requires explicit updates and does not
-automatically download replacements after a core upgrade.
+Compatibility checks run offline using local metadata; provider operations may require network access. An incompatible plugin refuses daemon startup. Run `plugins list --json` to inspect errors, then update or remove the affected package. Core upgrades do not download replacements automatically.
 
 ## Creating a plugin
 
-The provider interface is experimental. Publish a package with this manifest declaration:
+The interface is experimental. Publish this declaration in your package manifest:
 
 ```json
 {
-  "name": "@example/agent-device-provider",
-  "version": "1.0.0",
-  "type": "module",
   "agentDevicePlugin": {
     "apiVersion": 1,
     "provider": "example",
-    "entry": "./dist/plugin.js"
+    "entry": "./dist/plugin.mjs"
   }
 }
 ```
 
-Import the factory type from `agent-device/plugins` as a development dependency:
+Use `agent-device` as a development dependency. The entry exports a default factory typed as `ProviderPlugin` from `agent-device/plugins`. It receives `env`, package-specific `options`, and `createError` for host-recognized errors, and returns `{ runtime, platformModule }` declaring the manifest's provider ID. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
 
-```typescript
-import type { ProviderPlugin } from 'agent-device/plugins';
-import { createRuntime } from './runtime.js';
+Keep initialization prompt and free of network I/O or device allocation; a stalled factory blocks startup. Load platform mechanics through `platformModule.loadRuntime` and perform remote work in request-bound operations. A failing factory cleans up its own resources; core shuts down previously returned runtimes if another plugin fails.
 
-const plugin: ProviderPlugin = (host) => createRuntime(host);
-export default plugin;
-```
-
-The factory receives environment variables, package-specific options, and `createError` for
-errors recognized by the host. Set options by editing `plugins["<package>"].options` in user
-config; leave the managed `installation` field unchanged. Return `{ runtime, platformModule }`. Both must declare the
-manifest's provider ID. Runtime construction must not allocate devices; leave platform mechanics
-lazy through `platformModule.loadRuntime`. If a factory fails after acquiring resources, it owns
-their cleanup. Core cleans up previously returned runtimes when another plugin fails to start.
-Keep module initialization and factories prompt and free of network I/O; a stalled factory blocks
-daemon startup. Put remote work in request-bound runtime operations instead.
-
-Incompatible runtime contract changes require a new API version. Plugins cannot replace bundled
-providers or register arbitrary commands.
-
-Provider loading is available now. Provider-specific `connect` adapters and host services are
-being developed with the first integrations. Installing a package alone does not add a new
-`connect <provider>` command. Limrun, BrowserStack, and AWS Device Farm remain bundled.
+Incompatible contract changes require a new API version. Plugins cannot replace bundled providers or register arbitrary commands. Installing a package does not add `connect <provider>`; provider-specific connect adapters need separate support. Limrun, BrowserStack, and AWS Device Farm remain bundled.
