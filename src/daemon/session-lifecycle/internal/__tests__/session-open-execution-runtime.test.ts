@@ -1,6 +1,7 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 
 import path from 'node:path';
+import fs from 'node:fs';
 import type {
   ApplicationLifecycleRuntimeOperations,
   OpenApplicationInput,
@@ -597,3 +598,55 @@ test('cancelled fresh open does not publish after native launch returns', async 
     clearRequestAbortRegistration(registration);
   }
 });
+
+test('fresh open does not publish when its artifact directory cannot be created', async () => {
+  const store = makeSessionStore();
+  mockResolveTargetDevice.mockResolvedValue(makeAndroidEmulator('emulator-directory-failed-open'));
+  fs.writeFileSync(path.dirname(store.resolveSessionDir('cwd:held-open:default')), 'blocked');
+  await expect(
+    invokeHeldOpen(store, { runtime: { metroHost: 'new-host', metroPort: 9000 } }),
+  ).rejects.toThrow();
+  expect(mockDispatch).toHaveBeenCalled();
+  expect(store.get('cwd:held-open:default')).toBeUndefined();
+  expect(store.getRuntimeHints('cwd:held-open:default')).toBeUndefined();
+});
+
+for (const transition of ['rebuild', 'retire'] as const) {
+  test(`foreground composition retains the published lifetime across ${transition}`, async () => {
+    const store = makeSessionStore();
+    mockResolveTargetDevice.mockResolvedValue(
+      makeAndroidEmulator(`emulator-foreground-${transition}`),
+    );
+    const record = store.recordAction.bind(store);
+    vi.spyOn(store, 'recordAction').mockImplementationOnce((session, entry) => {
+      record(session, entry);
+      const ref = store.lookup('cwd:held-open:default')!;
+      queueMicrotask(() => {
+        if (transition === 'rebuild') {
+          store.update(ref, { recordOnlySession: true });
+        } else {
+          store.retire(ref);
+          store.publish(ref.address, session);
+        }
+        mockInspectDeviceRuntimeFacts.mockClear();
+      });
+    });
+    const response = await invokeHeldOpen(store, {
+      flags: { platform: 'android', foreground: true },
+    });
+    expect(response?.ok).toBe(true);
+    if (!response?.ok) throw new Error('open must remain successful');
+    if (transition === 'retire') {
+      expect(response.data?.initialSnapshotError).toEqual(
+        expect.objectContaining({
+          details: expect.objectContaining({ reason: 'session_lifetime_ended' }),
+        }),
+      );
+      expect(mockInspectDeviceRuntimeFacts).not.toHaveBeenCalled();
+      expect(store.get('cwd:held-open:default')?.snapshot).toBeUndefined();
+    } else {
+      expect(mockInspectDeviceRuntimeFacts).toHaveBeenCalled();
+      expect(store.get('cwd:held-open:default')?.recordOnlySession).toBe(true);
+    }
+  });
+}

@@ -1,5 +1,6 @@
 import { normalizeError, type NormalizedError } from '@agent-device/kernel/errors';
 import { dispatchSnapshotViaRuntime } from '../../snapshot-runtime.ts';
+import type { SessionRef } from '../../session-state.ts';
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type {
@@ -102,17 +103,18 @@ export async function resolveForegroundOpenRequest(params: {
  */
 export async function composeOpenWithInitialSnapshot(params: {
   req: DaemonRequest;
-  sessionName: string;
+  ref: SessionRef;
   logPath: string;
   sessionStore: SessionStore;
   openResponse: DaemonResponse;
   inspectFacts: InspectDeviceRuntimeFacts;
   bindDevice: BindDeviceRuntime;
 }): Promise<DaemonResponse> {
-  const { req, sessionName, logPath, sessionStore, openResponse } = params;
+  const { req, ref, logPath, sessionStore, openResponse } = params;
   if (!openResponse.ok || req.flags?.foreground !== true) return openResponse;
 
   try {
+    sessionStore.requireCurrent(ref);
     const snapshotResponse = await dispatchSnapshotViaRuntime({
       req: {
         ...req,
@@ -123,7 +125,7 @@ export async function composeOpenWithInitialSnapshot(params: {
         // key the snapshot runtime reads as `interactiveOnly`.
         flags: { ...req.flags, snapshotInteractiveOnly: true },
       },
-      sessionName,
+      sessionName: ref.address,
       logPath,
       sessionStore,
       inspectFacts: params.inspectFacts,

@@ -43,7 +43,7 @@ import {
   buildForeignWorkspaceSessionConflict,
 } from '../../session-recovery-hints.ts';
 import { describeOpenWaitForRefusal } from '../../open-device-contention-wait.ts';
-import { isImplicitSessionScopeConflict } from '../../session-routing.ts';
+import { isImplicitSessionScopeConflict, resolvePublicSessionName } from '../../session-routing.ts';
 import { applicationLifecycleExecutionFromRequest } from '../../application-lifecycle-execution.ts';
 import {
   abandonDeviceClaim,
@@ -64,6 +64,10 @@ import {
 import { requireAllocatorHeldDeviceClaim } from '../../device/device-claim-allocator.ts';
 import { deviceClaimRuleForOwner } from '../../device/device-claim-rule.ts';
 import { errorResponse, type DaemonFailureResponse } from '@agent-device/kernel/contracts';
+
+export type SessionOpenResult =
+  | Readonly<{ type: 'opened'; response: DaemonResponse; ref: SessionRef }>
+  | Readonly<{ type: 'response'; response: DaemonResponse }>;
 
 type OpenTiming = {
   totalDurationMs?: number;
@@ -185,7 +189,7 @@ export async function completeOpenCommand(params: {
   /** The stale claim this open released before taking the device, when there was one. */
   tookOverDeviceClaim?: TakenOverDeviceClaim;
   selection?: DeviceSelectionResult;
-}): Promise<DaemonResponse> {
+}): Promise<SessionOpenResult> {
   const {
     req,
     sessionName,
@@ -222,7 +226,7 @@ export async function completeOpenCommand(params: {
     appName,
     existingRef,
   });
-  if (provisionalSession.type === 'response') return provisionalSession.response;
+  if (provisionalSession.type === 'response') return provisionalSession;
   const openDispatchRef = provisionalSession.ref;
   requireOpenSessionAdmission(sessionStore, sessionName, openDispatchRef);
   const openDispatchSession = openDispatchRef
@@ -257,7 +261,10 @@ export async function completeOpenCommand(params: {
     : undefined;
   if (isRequestCanceled(req.meta?.requestId)) {
     const canceled = createRequestCanceledError();
-    return errorResponse(canceled.code, canceled.message, canceled.details);
+    return {
+      type: 'response',
+      response: errorResponse(canceled.code, canceled.message, canceled.details),
+    };
   }
 
   requireOpenSessionAdmission(sessionStore, sessionName, openDispatchRef);
@@ -270,20 +277,6 @@ export async function completeOpenCommand(params: {
       androidFreshnessBaseline: freshnessBaseline,
     });
   }
-  const nextRef = publishOpenSession({
-    req,
-    sessionStore,
-    sessionName,
-    existingRef: openDispatchRef,
-    device,
-    surface,
-    appBundleId: sessionAppBundleId,
-    appName,
-    deviceClaim,
-  });
-  const nextSession = sessionStore.requireCurrent(nextRef);
-  if (req.runtime !== undefined)
-    setSessionRuntimeHintsForOpen(sessionStore, sessionName, runtimeHints);
   const sessionStateDir = sessionStore.ensureSessionDir(sessionName);
   const requestLogPath = resolveSessionRequestLogPath(
     sessionStateDir,
@@ -297,7 +290,7 @@ export async function completeOpenCommand(params: {
     data: timing,
   });
   const openResult = buildOpenResult({
-    sessionName: nextSession.name,
+    sessionName: openDispatchSession?.name ?? resolvePublicSessionName(req),
     sessionStateDir,
     runnerLogPath: resolveSessionRunnerLogPath(sessionStateDir),
     requestLogPath,
@@ -317,6 +310,20 @@ export async function completeOpenCommand(params: {
   if (tookOverDeviceClaim) {
     appendResponseWarning(openResult, deviceClaimTakeoverWarning(tookOverDeviceClaim));
   }
+  const nextRef = publishOpenSession({
+    req,
+    sessionStore,
+    sessionName,
+    existingRef: openDispatchRef,
+    device,
+    surface,
+    appBundleId: sessionAppBundleId,
+    appName,
+    deviceClaim,
+  });
+  const nextSession = sessionStore.requireCurrent(nextRef);
+  if (req.runtime !== undefined)
+    setSessionRuntimeHintsForOpen(sessionStore, sessionName, runtimeHints);
   applyOrdinaryScriptRecordingOpenOutcome({
     session: nextSession,
     existingSession: existingRef ? nextSession : undefined,
@@ -330,7 +337,7 @@ export async function completeOpenCommand(params: {
     runtime: req.runtime !== undefined ? runtimeHints : undefined,
     result: openResult,
   });
-  return { ok: true, data: openResult };
+  return { type: 'opened', ref: nextRef, response: { ok: true, data: openResult } };
 }
 
 async function prepareOpenDispatchSession(params: {
@@ -445,7 +452,7 @@ export async function openNewSessionWithDeviceClaim(params: {
   clearRuntimeHints?: RuntimeHintClearOperation;
   reconcileOrphanedDeviceClaim: DeviceClaimReconciler;
   selection?: DeviceSelectionResult;
-}): Promise<DaemonResponse> {
+}): Promise<SessionOpenResult> {
   const {
     req,
     sessionName,
@@ -463,7 +470,7 @@ export async function openNewSessionWithDeviceClaim(params: {
   } = params;
   requireOpenSessionAdmission(sessionStore, sessionName, undefined);
   const conflict = findNewSessionDeviceConflict({ req, device, sessionStore });
-  if (conflict) return conflict;
+  if (conflict) return { type: 'response', response: conflict };
 
   const ownerClaim = await acquireDeviceClaimForOwner({
     req,
@@ -474,8 +481,11 @@ export async function openNewSessionWithDeviceClaim(params: {
     reconcileOrphanedDeviceClaim,
   });
   if (ownerClaim.status === 'conflict')
-    return buildDeviceClaimConflictError(device, ownerClaim.conflict);
-  if (ownerClaim.status === 'refused') return ownerClaim.response;
+    return {
+      type: 'response',
+      response: buildDeviceClaimConflictError(device, ownerClaim.conflict),
+    };
+  if (ownerClaim.status === 'refused') return { type: 'response', response: ownerClaim.response };
   const deviceClaim = ownerClaim.status === 'acquired' ? ownerClaim.ownership : undefined;
   const tookOverDeviceClaim = ownerClaim.status === 'acquired' ? ownerClaim.tookOver : undefined;
   const effects: NewSessionOpenEffects = { mayHaveStarted: false };
@@ -500,14 +510,14 @@ export async function openNewSessionWithDeviceClaim(params: {
     });
     if (details.type === 'response') {
       await rollbackClaim();
-      return details.response;
+      return { type: 'response', response: details.response };
     }
     // Preparation can boot the device or warm caches, but it cannot establish session ownership.
     // Stamping here is what covers a boot preparation caused for this very open; from
     // `completeOpenCommand` on, a relaunch-close or a runtime-hint write may already have touched the
     // app, so a failure from that point cannot prove ownership was never established.
     const reclaimed = await renewOpenSessionClaim(device, deviceClaim);
-    if (reclaimed) return reclaimed;
+    if (reclaimed) return { type: 'response', response: reclaimed };
     effects.mayHaveStarted = true;
     const requestedPositionals = req.positionals ?? [];
     // `open <app> <url>` carries both positionals; only `--foreground`, which has none, gets its
@@ -537,7 +547,7 @@ export async function openNewSessionWithDeviceClaim(params: {
       tookOverDeviceClaim,
       selection,
     });
-    if (!response.ok) await rollbackClaim();
+    if (!response.response.ok) await rollbackClaim();
     return response;
   } catch (error) {
     await rollbackClaim();

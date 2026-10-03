@@ -40,6 +40,7 @@ import {
   openNewSessionWithDeviceClaim,
   renewOpenSessionClaim,
   type OpenApplicationRuntime,
+  type SessionOpenResult,
   type RuntimeHintApplyOperation,
   type RuntimeHintClearOperation,
 } from './session-open-execution.ts';
@@ -150,7 +151,7 @@ async function resolveOpenRuntimePlanAdmission(params: {
 }
 
 // fallow-ignore-next-line complexity
-async function handleOpenCommand(params: SessionOpenCommandInput): Promise<DaemonResponse> {
+async function handleOpenCommand(params: SessionOpenCommandInput): Promise<SessionOpenResult> {
   const { sessionName, logPath, sessionStore } = params;
 
   const existingRef = sessionStore.lookup(sessionName);
@@ -158,17 +159,21 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
     req: params.req,
     hasExistingSession: Boolean(existingRef),
   });
-  if (foregroundResolution.type === 'response') return foregroundResolution.response;
+  if (foregroundResolution.type === 'response')
+    return { type: 'response', response: foregroundResolution.response };
   const req = foregroundResolution.type === 'resolved' ? foregroundResolution.req : params.req;
 
   requireOpenSessionAdmission(sessionStore, sessionName, existingRef);
   if (existingRef) {
     const session = sessionStore.requireCurrent(existingRef);
     if (req.flags?.saveScript) {
-      return errorResponse(
-        'INVALID_ARGS',
-        'open --save-script can only arm a fresh session. Use the current session without --save-script, or close it and start a fresh session.',
-      );
+      return {
+        type: 'response',
+        response: errorResponse(
+          'INVALID_ARGS',
+          'open --save-script can only arm a fresh session. Use the current session without --save-script, or close it and start a fresh session.',
+        ),
+      };
     }
     const shouldRelaunch = req.flags?.relaunch === true;
     const requestedOpenTarget = req.positionals?.[0];
@@ -179,11 +184,14 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       openTarget,
       session.surface,
     );
-    if (typeof surfaceResult !== 'string') return surfaceResult;
+    if (typeof surfaceResult !== 'string') return { type: 'response', response: surfaceResult };
     if (!openTarget && surfaceResult === 'app') {
-      return shouldRelaunch
-        ? invalidOpenArgs('open --relaunch requires an app name or an active session app.')
-        : invalidOpenArgs('Session already active. Close it first or pass a new --session name.');
+      return {
+        type: 'response',
+        response: shouldRelaunch
+          ? invalidOpenArgs('open --relaunch requires an app name or an active session app.')
+          : invalidOpenArgs('Session already active. Close it first or pass a new --session name.'),
+      };
     }
 
     const validation = await validateResolvedOpenRequest({
@@ -192,7 +200,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       surface: surfaceResult,
       device: session.device,
     });
-    if (validation) return validation;
+    if (validation) return { type: 'response', response: validation };
 
     // Reopening renews the claim before anything touches the device, so no other daemon ever sees
     // a device this session is actively coming back to as one its owner walked away from.
@@ -201,7 +209,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       admittedSession.device,
       admittedSession.deviceClaim,
     );
-    if (lostClaim) return lostClaim;
+    if (lostClaim) return { type: 'response', response: lostClaim };
 
     const device = await refreshSessionDeviceIfNeeded(session.device);
     const selection = resolveExistingSessionDeviceSelection(device);
@@ -215,7 +223,8 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       inspectFacts: params.inspectFacts,
       bindDevice: params.bindDevice,
     });
-    if (runtimePlanAdmission.type === 'response') return runtimePlanAdmission.response;
+    if (runtimePlanAdmission.type === 'response')
+      return { type: 'response', response: runtimePlanAdmission.response };
     const { admission, runtimeHintPlan } = runtimePlanAdmission;
     // The preparation can boot a device, clear native hints, or warm a runner. An existing
     // frame becomes stale before those effects, rather than after the later visible launch.
@@ -233,7 +242,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       clearRuntimeHints: admission.clearRuntimeHints,
       foreground: false,
     });
-    if (details.type === 'response') return details.response;
+    if (details.type === 'response') return { type: 'response', response: details.response };
 
     // Preparation may have booted the device to reach this surface, and a boot an owner caused for
     // its own reopen cannot later read as a boot its owner walked away from.
@@ -242,7 +251,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       device,
       sessionStore.requireCurrent(existingRef).deviceClaim,
     );
-    if (reclaimed) return reclaimed;
+    if (reclaimed) return { type: 'response', response: reclaimed };
 
     return await completeOpenCommand({
       req,
@@ -270,14 +279,17 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
   const shouldRelaunch = req.flags?.relaunch === true;
   const openTarget = req.positionals?.[0];
   if (shouldRelaunch && !openTarget)
-    return invalidOpenArgs('open --relaunch requires an app argument.');
+    return {
+      type: 'response',
+      response: invalidOpenArgs('open --relaunch requires an app argument.'),
+    };
 
   const preResolvedValidation = await validatePreResolvedOpenRequest({
     shouldRelaunch,
     openTarget,
     platform: req.flags?.platform === 'android' ? 'android' : undefined,
   });
-  if (preResolvedValidation) return preResolvedValidation;
+  if (preResolvedValidation) return { type: 'response', response: preResolvedValidation };
 
   const selection = await resolveTargetDeviceSelection(
     req.flags ?? {},
@@ -286,7 +298,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
   const device = selection.device;
   await req.internal?.retainDeviceExecutionLock?.(device.id);
   const surfaceResult = resolveOpenSurfaceResponse(device, req.flags?.surface, openTarget);
-  if (typeof surfaceResult !== 'string') return surfaceResult;
+  if (typeof surfaceResult !== 'string') return { type: 'response', response: surfaceResult };
 
   const validation = await validateResolvedOpenRequest({
     shouldRelaunch,
@@ -294,7 +306,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
     surface: surfaceResult,
     device,
   });
-  if (validation) return validation;
+  if (validation) return { type: 'response', response: validation };
 
   const runtimePlanAdmission = await resolveOpenRuntimePlanAdmission({
     req,
@@ -304,7 +316,8 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
     inspectFacts: params.inspectFacts,
     bindDevice: params.bindDevice,
   });
-  if (runtimePlanAdmission.type === 'response') return runtimePlanAdmission.response;
+  if (runtimePlanAdmission.type === 'response')
+    return { type: 'response', response: runtimePlanAdmission.response };
   const { admission, runtimeHintPlan } = runtimePlanAdmission;
 
   return await withKeyedLock(
@@ -332,12 +345,14 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
 export async function handleSessionOpenCommands(
   params: SessionOpenCommandInput,
 ): Promise<DaemonResponse> {
-  const openResponse = await handleOpenCommand(params);
-  if (!openResponse.ok || params.req.flags?.foreground !== true) return openResponse;
+  const result = await handleOpenCommand(params);
+  const openResponse = result.response;
+  if (result.type !== 'opened' || params.req.flags?.foreground !== true) return openResponse;
   return await composeOpenWithInitialSnapshot({
     ...params,
     inspectFacts: requireRuntimeFacts(params.inspectFacts),
     bindDevice: requireRuntimeBinding(params.bindDevice),
     openResponse,
+    ref: result.ref,
   });
 }
