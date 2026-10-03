@@ -1,3 +1,4 @@
+import { expandSessionPath } from '@agent-device/host-kit/session-paths';
 import fs from 'node:fs';
 import type { AppDeploymentResult } from '@agent-device/contracts/app-deployment-runtime';
 import {
@@ -9,7 +10,7 @@ import { readNotificationPayload } from '../dispatch-payload.ts';
 import { cleanupUploadedArtifact, prepareUploadedArtifact } from '../artifact-tracking.ts';
 import { expireRefFrame } from '../ref-frame.ts';
 import type { BindDeviceRuntime, InspectDeviceRuntimeFacts } from '../request-runtime-binding.ts';
-import { SessionStore } from '../session-store.ts';
+import type { SessionStore } from '../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
 import type { SessionState } from '../session-state.ts';
 import { resolvePayloadInput } from '../payload-input.ts';
@@ -62,7 +63,7 @@ export async function handleAppDeploymentCommand(params: {
   try {
     const appPath = uploadedArtifactId
       ? prepareUploadedArtifact(uploadedArtifactId, req.meta?.tenantId)
-      : SessionStore.expandHome(target.appPathInput);
+      : expandSessionPath(target.appPathInput);
     if (!fs.existsSync(appPath)) {
       return errorResponse('INVALID_ARGS', `App binary not found: ${appPath}`);
     }
@@ -242,7 +243,7 @@ function resolvePushPayload(payloadArg: string, cwd?: string): string {
   const resolved = resolvePayloadInput(payloadArg, {
     subject: 'Push payload',
     cwd,
-    expandPath: (value, currentCwd) => SessionStore.expandHome(value, currentCwd),
+    expandPath: (value, currentCwd) => expandSessionPath(value, currentCwd),
   });
   return resolved.kind === 'file' ? resolved.path : resolved.text;
 }

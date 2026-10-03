@@ -1,3 +1,4 @@
+import { expandSessionPath } from '@agent-device/host-kit/session-paths';
 import type { CommandFlags } from '@agent-device/contracts/command';
 import {
   retiredScreenshotMaxSizeFlagError,
@@ -38,7 +39,6 @@ import {
   type ScreenshotRuntimeBindings,
 } from './screenshot-runtime-binding.ts';
 import { setSessionSnapshot } from './session-snapshot.ts';
-import { SessionStore } from './session-store.ts';
 import type { DaemonRequest } from './daemon-request.ts';
 import type { SessionState } from './session-state.ts';
 
@@ -321,7 +321,7 @@ function readScreenshotRequest(
   const positionals = req.positionals ?? [];
   const flags = req.flags ?? {};
   const expand = (value: string | undefined) =>
-    value === undefined ? undefined : SessionStore.expandHome(value, req.meta?.cwd);
+    value === undefined ? undefined : expandSessionPath(value, req.meta?.cwd);
   const positionalPath = expand(positionals[0]);
   const outFlag = expand(flags.out);
   return {

@@ -1,14 +1,14 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { AppError } from '@agent-device/kernel/errors';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import type { SessionRef, SessionRuntimeHints, SessionState } from './session-state.ts';
 import { recordActionEntry, type RecordActionEntry } from './session-action-recorder.ts';
+import { isSafeSessionSegment, safeSessionName } from '@agent-device/host-kit/session-paths';
 import {
-  expandSessionPath,
-  isSafeSessionSegment,
-  safeSessionName,
-} from '@agent-device/host-kit/session-paths';
+  resolveSessionDir,
+  resolveSessionAppLogPath,
+  resolveSessionAppLogPidPath,
+} from './session-artifact-paths.ts';
 import {
   readRepairTombstoneFile,
   resolveRepairTombstonePath,
@@ -380,20 +380,8 @@ export class SessionStore {
     return path.join(this.sessionsDir, `${safeName}-${timestamp}.trace.log`);
   }
 
-  /**
-   * The one place a session name becomes a directory, so the invariant that every
-   * session dir lies beneath `sessionsDir` is enforced here rather than by each
-   * caller: `.` and `..` survive `safeSessionName` and would resolve to the
-   * sessions dir itself or the daemon state dir above it.
-   */
   resolveSessionDir(sessionName: string): string {
-    if (!isSafeSessionSegment(sessionName)) {
-      throw new AppError(
-        'INVALID_ARGS',
-        `Invalid session name ${JSON.stringify(sessionName)}: a session name cannot be empty, ".", or "..".`,
-      );
-    }
-    return path.join(this.sessionsDir, safeSessionName(sessionName));
+    return resolveSessionDir(this.sessionsDir, sessionName);
   }
 
   // Daemon state dir (parent of the `sessions/` dir), matching daemonPaths.baseDir. Called via
@@ -411,19 +399,15 @@ export class SessionStore {
 
   /** Path to session-scoped app log file. Agent can grep this for token-efficient debugging. */
   resolveAppLogPath(sessionName: string): string {
-    return path.join(this.resolveSessionDir(sessionName), 'app.log');
+    return resolveSessionAppLogPath(this.sessionsDir, sessionName);
   }
 
   resolveAppLogPidPath(sessionName: string): string {
-    return path.join(this.resolveSessionDir(sessionName), 'app-log.pid');
+    return resolveSessionAppLogPidPath(this.sessionsDir, sessionName);
   }
 
   resolveEventLogPath(sessionName: string): string {
     return resolveSessionEventLogPath(this.resolveSessionDir(sessionName));
-  }
-
-  static expandHome(filePath: string, cwd?: string): string {
-    return expandSessionPath(filePath, cwd);
   }
 
   /**

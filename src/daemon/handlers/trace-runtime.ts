@@ -1,7 +1,8 @@
+import { expandSessionPath } from '@agent-device/host-kit/session-paths';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { TraceCommandResult } from '@agent-device/contracts/recording';
-import { SessionStore } from '../session-store.ts';
+import type { SessionStore } from '../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
 import type { SessionState } from '../session-state.ts';
 import { recordSessionAction } from '../session-action-recorder.ts';
@@ -29,9 +30,7 @@ function startTrace(
   session: SessionState,
 ): DaemonResponse {
   if (session.trace) return errorResponse('INVALID_ARGS', 'trace already in progress');
-  const outPath = SessionStore.expandHome(
-    req.positionals?.[1] ?? sessionStore.defaultTracePath(session),
-  );
+  const outPath = expandSessionPath(req.positionals?.[1] ?? sessionStore.defaultTracePath(session));
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.appendFileSync(outPath, '');
   session.trace = { outPath, startedAt: Date.now() };
@@ -72,7 +71,7 @@ function stopTrace(
 
 function relocateTraceOutput(currentPath: string, requestedPath: string | undefined): string {
   if (!requestedPath) return currentPath;
-  const resolved = SessionStore.expandHome(requestedPath);
+  const resolved = expandSessionPath(requestedPath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   if (fs.existsSync(currentPath)) fs.renameSync(currentPath, resolved);
   else fs.appendFileSync(resolved, '');
