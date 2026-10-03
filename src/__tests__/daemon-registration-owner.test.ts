@@ -542,8 +542,11 @@ test('a legacy contender cannot unlink a hardened owner while it delays metadata
   try {
     await waitForCutoverFixture(() => fs.existsSync(path.join(paths.baseDir, 'registration-held')));
     legacy = spawnLegacyDaemonFixture(paths);
-    await legacy.exited;
+    await waitForCutoverFixture(() =>
+      fs.existsSync(path.join(paths.baseDir, 'legacy-disposition.json')),
+    );
     assert.equal(legacyDisposition(paths), false);
+    await legacy.exited;
     const claim = inspectProcessLock(paths.lockPath);
     assert.equal(claim.state, 'held');
     if (claim.state !== 'held') throw new Error('current owner lost its claim');
