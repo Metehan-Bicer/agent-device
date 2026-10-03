@@ -13,7 +13,7 @@ import { activateCompleteRefFrame, refFrameState } from '../ref-frame.ts';
 import { setSessionSnapshot } from '../session-snapshot.ts';
 import type { SessionStore } from '../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
-import type { SessionState } from '../session-state.ts';
+import type { SessionRef, SessionState } from '../session-state.ts';
 import { buildSnapshotState } from '@agent-device/capture-kit/snapshot-state';
 
 // #1638 `--settle` on the GENERIC daemon route (scroll/back): the settled diff,
@@ -85,19 +85,19 @@ type SettlePayload = {
 const captureObservations: Array<{ postGestureStabilizationPending: boolean }> = [];
 
 async function emulateCaptureSnapshotForSession(
-  session: SessionState,
+  ref: SessionRef,
   flags: CommandFlags | undefined,
   sessionStore: SessionStore,
   options: { interactiveOnly: boolean },
 ) {
   captureObservations.push({
-    postGestureStabilizationPending: session.postGestureStabilization !== undefined,
+    postGestureStabilizationPending:
+      sessionStore.requireCurrent(ref).postGestureStabilization !== undefined,
   });
   const effectiveFlags = { ...(flags ?? {}), snapshotInteractiveOnly: options.interactiveOnly };
   const snapshotData = (await mockDispatch('snapshot')) as Parameters<typeof buildSnapshotState>[0];
   const snapshot = buildSnapshotState(snapshotData ?? {}, effectiveFlags);
-  setSessionSnapshot(session, snapshot);
-  sessionStore.set(session.name, session);
+  setSessionSnapshot(sessionStore.requireCurrent(ref), snapshot);
   return snapshot;
 }
 
@@ -210,8 +210,7 @@ beforeEach(() => {
   mockCaptureSnapshotForSession.mockImplementation(
     (...args: Parameters<typeof captureSnapshotForSession>) => {
       const [ref, flags, sessionStore, _contextFromFlags, options] = args;
-      const session = sessionStore.requireCurrent(ref);
-      return emulateCaptureSnapshotForSession(session, flags, sessionStore, options);
+      return emulateCaptureSnapshotForSession(ref, flags, sessionStore, options);
     },
   );
 });
@@ -620,3 +619,91 @@ test('an orphaned --settle-quiet is rejected before the command dispatches', asy
   expect(response.error?.code).toBe('INVALID_ARGS');
   expect(response.error?.message).toContain('--settle-quiet');
 });
+
+test('scroll stays successful when its lifetime retires during optional settle observation', async () => {
+  const store = makeSessionStore();
+  const name = 'generic-settle-retired';
+  const session = seedSession(name, store);
+  const ref = store.lookup(name)!;
+  mockCommandDispatch([AFTER_NODES]);
+  mockCaptureSnapshotForSession.mockImplementationOnce(
+    async (boundRef, flags, sessionStore, _context, options) => {
+      const observed = await emulateCaptureSnapshotForSession(
+        boundRef,
+        flags,
+        sessionStore,
+        options,
+      );
+      queueMicrotask(() => {
+        store.retire(ref);
+        store.publish(name, makeIosSession(name));
+      });
+      return observed;
+    },
+  );
+  const response = await dispatchGeneric({
+    sessionName: name,
+    sessionStore: store,
+    session,
+    command: 'scroll',
+    positionals: ['down'],
+    flags: { ...SETTLE_FLAGS },
+  });
+  expect(expectOkData(response).settle).toBeUndefined();
+  expect(store.get(name)?.snapshot).toBeUndefined();
+  expect(store.get(name)?.actions).toEqual([]);
+});
+
+for (const change of ['rebuild', 'retire'] as const) {
+  test(`held generic settle capture respects its lifetime after ${change}`, async () => {
+    const store = makeSessionStore();
+    const name = `generic-held-settle-${change}`;
+    const session = seedSession(name, store);
+    const ref = store.lookup(name)!;
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockDispatch.mockImplementation(async (command) => {
+      if (command !== 'snapshot') return {};
+      entered();
+      await held;
+      return snapshotPayload({ nodes: AFTER_NODES });
+    });
+    const pending = dispatchGeneric({
+      sessionName: name,
+      sessionStore: store,
+      session,
+      command: 'scroll',
+      positionals: ['down'],
+      flags: { ...SETTLE_FLAGS },
+    });
+    try {
+      await reached;
+      const trace = { outPath: 'latest-trace', startedAt: 1 };
+      const successor = makeIosSession(name);
+      if (change === 'rebuild') store.update(ref, { trace });
+      else {
+        store.retire(ref);
+        store.publish(name, successor);
+      }
+      release();
+      const data = expectOkData(await pending);
+      if (change === 'rebuild') {
+        expect(store.requireCurrent(ref).trace).toBe(trace);
+        expect(store.requireCurrent(ref).snapshot?.nodes[1]?.label).toBe('Load more');
+      } else {
+        expect(data.settle).toBeUndefined();
+        expect(store.get(name)).toBe(successor);
+        expect(successor.snapshot).toBeUndefined();
+      }
+    } finally {
+      release();
+      await pending;
+    }
+  });
+}

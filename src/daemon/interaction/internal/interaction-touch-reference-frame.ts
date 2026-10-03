@@ -72,7 +72,9 @@ export async function resolveDirectTouchReferenceFrameSafely(params: {
       level: 'warn',
       phase: 'touch_reference_frame_resolve_failed',
       data: {
-        platform: params.ref.session.device.platform,
+        platform:
+          params.sessionStore.resolveCurrent(params.ref)?.device.platform ??
+          params.ref.session.device.platform,
         error: error instanceof Error ? error.message : String(error),
       },
     });

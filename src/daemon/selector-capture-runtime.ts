@@ -197,6 +197,7 @@ async function runCapture(
   snapshotScope: string | undefined,
   interactiveOnly = request.flags?.snapshotInteractiveOnly,
 ): Promise<SnapshotState> {
+  const session = params.ref ? params.sessionStore.requireCurrent(params.ref) : undefined;
   const flags = {
     ...request.flags,
     snapshotInteractiveOnly: interactiveOnly,
@@ -204,7 +205,7 @@ async function runCapture(
   const boundCapture = params.capture;
   const capture = await captureSnapshot({
     device: params.device,
-    session: params.session,
+    session,
     flags,
     outPath: request.outPath ?? params.req.flags?.out,
     logPath: params.logPath ?? '',
@@ -217,7 +218,7 @@ async function runCapture(
           flags,
           logPath: params.logPath ?? '',
           meta: params.req.meta,
-          session: params.session,
+          session,
           snapshotScope,
           includeRects: request.includeRects,
           // The POLL's remaining budget, not the request's. A binding's signal is fixed at

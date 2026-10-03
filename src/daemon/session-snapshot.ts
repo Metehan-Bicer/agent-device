@@ -130,7 +130,8 @@ export function issueSettleRefs(
   settle: SettleObservation | undefined,
 ): number | undefined {
   if (!ref || !settle?.diff) return undefined;
-  const session = sessionStore.requireCurrent(ref);
+  const session = sessionStore.resolveCurrent(ref);
+  if (!session) return undefined;
   markSessionPartialRefsIssued(session, collectSettleIssuedRefBodies(settle));
   return session.snapshotGeneration;
 }

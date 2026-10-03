@@ -146,15 +146,15 @@ function createSnapshotRuntime(params: {
         isRefScopedSnapshot(req),
       );
       const snapshot = keepCurrentSnapshot ? current.snapshot : snapshotRecord.snapshot;
-      const nextSession: SessionState =
-        current ??
-        createSnapshotSession({
-          sessionName,
-          sessionScope: resolveSessionScope(req),
-          device,
-          snapshot,
-          appBundleId: record.appBundleId,
-        });
+      const nextSession: SessionState = ref
+        ? sessionStore.update(ref, {})
+        : createSnapshotSession({
+            sessionName,
+            sessionScope: resolveSessionScope(req),
+            device,
+            snapshot,
+            appBundleId: record.appBundleId,
+          });
       nextSession.appName = record.appName ?? current?.appName;
       setCommandSnapshot(nextSession, {
         snapshot,
