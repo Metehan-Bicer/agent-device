@@ -11,3 +11,10 @@ export function makeSessionStore(prefix = 'agent-device-test-'): SessionStore {
 export function makeStoredSessionRef(session: SessionState, address = session.name): SessionRef {
   return makeSessionStore().publish(address, session);
 }
+
+export function storeSessionForTest(store: SessionStore, session: SessionState): SessionRef {
+  const ref = store.lookup(session.name);
+  if (!ref) return store.publish(session.name, session);
+  if (ref.session !== session) throw new Error('A different test session occupies this address');
+  return ref;
+}
