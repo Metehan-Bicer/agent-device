@@ -102,7 +102,7 @@ export async function dispatchSnapshotRuntimeCommand(
         req,
         sessionName,
         sessionStore,
-        session: current,
+        ref: sessions.getRef(),
         result: result.record,
       });
       const data = applyRecoveredWarningLatch({
@@ -266,12 +266,11 @@ function recordSnapshotRuntimeAction(params: {
   req: DaemonRequest;
   sessionName: string;
   sessionStore: SessionStore;
-  session: SessionState | undefined;
+  ref: SessionRef | undefined;
   result: SnapshotRuntimeRecord;
 }): void {
-  const session = params.session;
-  if (!session) return;
-  params.sessionStore.recordAction(session, {
+  if (!params.ref) return;
+  params.sessionStore.recordAction(params.ref, {
     command: params.req.command,
     positionals: params.req.positionals ?? [],
     flags: params.req.flags ?? {},

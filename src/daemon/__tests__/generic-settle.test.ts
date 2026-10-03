@@ -187,7 +187,7 @@ async function dispatchGeneric(params: {
   };
   return await dispatchGenericCommand({
     req,
-    session: params.session,
+    ref: params.sessionStore.lookup(params.sessionName)!,
     sessionName: params.sessionName,
     logPath: '',
     sessionStore: params.sessionStore,
@@ -549,32 +549,31 @@ test('scroll without --settle takes no observation captures and issues no refs',
   expect(refFrameState(sessionStore.get(sessionName) as SessionState)).toBe('expired');
 });
 
-test('a settle observation that cannot build a runtime degrades instead of failing the action', async () => {
+test('an ended generic lifetime is refused before dispatch or settle construction', async () => {
   const sessionStore = makeSessionStore();
   const sessionName = 'generic-settle-evicted';
-  // The session the router handed us is no longer in the store — evicted
-  // between dispatch and observation. Building the settle runtime throws
-  // SESSION_NOT_FOUND, and the observation is best-effort: the scroll already
-  // happened, so the response keeps its result and simply carries no settle.
-  const session = makeIosSession(sessionName);
-  setSessionSnapshot(
-    session,
-    buildSnapshotState({ nodes: BEFORE_NODES, backend: 'xctest', producer: 'apple-runner' }, {}),
-  );
-  activateCompleteRefFrame(session);
+  seedSession(sessionName, sessionStore);
+  const ref = sessionStore.lookup(sessionName)!;
+  sessionStore.retire(ref);
   mockCommandDispatch([AFTER_NODES]);
-
-  const response = await dispatchGeneric({
-    sessionName,
-    sessionStore,
-    session,
-    command: 'scroll',
-    positionals: ['down'],
-    flags: { ...SETTLE_FLAGS },
-  });
-
-  const data = expectOkData(response);
-  expect(data.settle).toBeUndefined();
+  await expect(
+    dispatchGenericCommand({
+      req: {
+        token: 't',
+        session: sessionName,
+        command: 'scroll',
+        positionals: ['down'],
+        flags: SETTLE_FLAGS,
+      },
+      ref,
+      sessionName,
+      sessionStore,
+      logPath: '',
+      contextFromFlags,
+      executePlatformCommand: platformExecution,
+    }),
+  ).rejects.toMatchObject({ details: { reason: 'session_lifetime_ended' } });
+  expect(mockDispatch).not.toHaveBeenCalled();
   expect(captureObservations).toEqual([]);
 });
 

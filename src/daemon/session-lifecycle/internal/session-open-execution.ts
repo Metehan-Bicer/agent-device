@@ -330,7 +330,7 @@ export async function completeOpenCommand(params: {
     saveScriptRequested: Boolean(req.flags?.saveScript),
     responseData: openResult,
   });
-  sessionStore.recordAction(nextSession, {
+  sessionStore.recordAction(nextRef, {
     command: 'open',
     positionals: openPositionals,
     flags: req.flags ?? {},

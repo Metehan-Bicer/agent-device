@@ -618,15 +618,15 @@ for (const transition of ['rebuild', 'retire'] as const) {
       makeAndroidEmulator(`emulator-foreground-${transition}`),
     );
     const record = store.recordAction.bind(store);
-    vi.spyOn(store, 'recordAction').mockImplementationOnce((session, entry) => {
-      record(session, entry);
+    vi.spyOn(store, 'recordAction').mockImplementationOnce((recordedRef, entry) => {
+      record(recordedRef, entry);
       const ref = store.lookup('cwd:held-open:default')!;
       queueMicrotask(() => {
         if (transition === 'rebuild') {
           store.update(ref, { recordOnlySession: true });
         } else {
           store.retire(ref);
-          store.publish(ref.address, session);
+          store.publish(ref.address, recordedRef.session);
         }
         mockInspectDeviceRuntimeFacts.mockClear();
       });
