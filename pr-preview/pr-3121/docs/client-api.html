@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3121/static/js/index.765cfc49e1.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3121/static/js/index.c5a4b1ba1d.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -163,7 +163,7 @@
 </li>
 <li><code>agent-device/plugins</code>
 <ul>
-<li>experimental types: <code>ProviderPlugin</code>, <code>ProviderPluginHost</code>, <code>ProviderPluginRegistration</code>; see <a href="/agent-device/pr-preview/pr-3121/docs/plugins" class="rp-link">provider plugins</a>.</li>
+<li>experimental factory context: <code>ProviderPluginHost</code>; see <a href="/agent-device/pr-preview/pr-3121/docs/plugins" class="rp-link">provider plugins</a>.</li>
 </ul>
 </li>
 <li><code>agent-device/ai-sdk</code>
@@ -444,6 +444,7 @@ resolve the executor from a device instead.</p>
 <li><code>client.recording.record()</code> and <code>client.recording.trace()</code></li>
 <li><code>client.settings.update()</code></li>
 </ul>
+<p><code>client.devices.list()</code> returns <code>AgentDeviceDevice</code> entries. Their optional <code>model</code> and <code>osVersion</code> fields describe the hardware and OS when discovery reports them; see <a href="/agent-device/pr-preview/pr-3121/docs/commands#device-discovery" class="rp-link">Device discovery</a> for the sources.</p>
 <p><code>client.observability.events({ cursor, limit })</code> reads the session event timeline as paged JSON entries. Use <code>nextCursor</code> from the previous page to continue from the daemon-owned <code>events.ndjson</code> file without replaying already uploaded/displayed events. Cursors are absolute and survive the file&#x27;s size rotation; a cursor older than the retained window rejects with <code>COMMAND_FAILED</code>, <code>details.reason: &quot;EVENT_LOG_CURSOR_EXPIRED&quot;</code>, and <code>details.earliestCursor</code> to resume from.
 The event timeline keeps operational context such as command/status/timing, paths, session/device/app identifiers, refs/selectors, and coordinates. Typed text, clipboard writes, push/event payloads, raw unknown command arguments, and matching raw message fragments are replaced with length-only placeholders.</p>
 <p><code>client.observability.audio()</code> mirrors <code>audio probe start|status|stop</code>. Use it to collect compact RMS/peak dBFS buckets while other session actions continue:</p>

@@ -931,7 +931,7 @@ Supported public entry points for Node consumers:
   - types: `LimrunRuntimeOptions`, `LimrunDeviceSession`, `LimrunAndroidDeviceSession`,
     `LimrunIosDeviceSession`, `LimrunIosCommandExecution`
 - `agent-device/plugins`
-  - experimental types: `ProviderPlugin`, `ProviderPluginHost`, `ProviderPluginRegistration`; see [provider plugins](/agent-device/pr-preview/pr-3121/docs/plugins.md).
+  - experimental factory context: `ProviderPluginHost`; see [provider plugins](/agent-device/pr-preview/pr-3121/docs/plugins.md).
 - `agent-device/ai-sdk`
   - `createAgentDeviceTools(options)`
   - types: `AgentDeviceToolSet`, `AgentDeviceTools`, `CreateAgentDeviceToolsOptions`
@@ -1254,6 +1254,8 @@ The complete domain-client method map is:
 - `client.debug.symbols()`
 - `client.recording.record()` and `client.recording.trace()`
 - `client.settings.update()`
+
+`client.devices.list()` returns `AgentDeviceDevice` entries. Their optional `model` and `osVersion` fields describe the hardware and OS when discovery reports them; see [Device discovery](/agent-device/pr-preview/pr-3121/docs/commands.md#device-discovery) for the sources.
 
 `client.observability.events({ cursor, limit })` reads the session event timeline as paged JSON entries. Use `nextCursor` from the previous page to continue from the daemon-owned `events.ndjson` file without replaying already uploaded/displayed events. Cursors are absolute and survive the file's size rotation; a cursor older than the retained window rejects with `COMMAND_FAILED`, `details.reason: "EVENT_LOG_CURSOR_EXPIRED"`, and `details.earliestCursor` to resume from.
 The event timeline keeps operational context such as command/status/timing, paths, session/device/app identifiers, refs/selectors, and coordinates. Typed text, clipboard writes, push/event payloads, raw unknown command arguments, and matching raw message fragments are replaced with length-only placeholders.
@@ -1723,6 +1725,7 @@ agent-device capabilities --session checkout --json
 - `devices` lists available targets after applying any platform selector or isolation scope flags.
 - Use `--platform` to narrow discovery to Apple-family (`ios`, `tvOS`, `macOS`), Android, HarmonyOS, or Vega OS targets.
 - Use `--ios-simulator-device-set` and `--android-device-allowlist` when you need tenant- or lab-scoped discovery.
+- Each listed device carries `model` (hardware model, for example `iPhone 17 Pro` or `Pixel 9`) and `osVersion` (for example `26.1` or `16`) when the platform tooling reports them. iOS simulators read them from `simctl` device types and runtimes, physical iOS devices from `devicectl` (or the OS version printed by `xctrace`), and running Android devices from `ro.product.model` and `ro.build.version.release`; Android emulators report the system image model, such as `sdk_gphone64_arm64`. Stopped AVDs and other platforms omit both fields. They describe a device only and are not selectors.
 - `capabilities` reports the command names supported by the selected session device or an explicit `--platform`/`--device`/`--udid`/`--serial` target.
 - In JSON output, `capabilities` returns `{ device, availableCommands }`. Use `availableCommands` for dynamic integrations instead of maintaining a separate platform support table.
 
@@ -3789,7 +3792,7 @@ The interface is experimental. Publish this declaration in your package manifest
 {"agentDevicePlugin": {"apiVersion": 1, "provider": "example", "entry": "./dist/plugin.mjs"}}
 ```
 
-Use `agent-device` as a development dependency. The entry exports a default factory typed as `ProviderPlugin` from `agent-device/plugins`. It receives `env`, package-specific `options`, and `createError` for host-recognized errors, and returns `{ runtime, platformModule }` declaring the manifest's provider ID. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
+Use `agent-device` as a development dependency. The default factory accepts `ProviderPluginHost` from `agent-device/plugins`: `env`, package-specific `options`, and `createError` for host-recognized errors. Return `{ runtime, platformModule }` implementing the [provider runtime](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/provider-device-runtime.ts) and [platform module](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/platform-runtime-operations.ts) contracts. Both provider IDs must match the manifest; the module owner must declare `kind: 'provider-runtime'` and a nonempty `instance`. Core checks required runtime methods and owner metadata at startup; operation contracts are checked when used. Provider packages own implementation types; the SDK exposes only factory context. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
 
 Keep initialization prompt and free of network I/O or device allocation; a stalled factory blocks startup. Load platform mechanics through `platformModule.loadRuntime` and perform remote work in request-bound operations. A failing factory cleans up its own resources; core shuts down previously returned runtimes if another plugin fails.
 

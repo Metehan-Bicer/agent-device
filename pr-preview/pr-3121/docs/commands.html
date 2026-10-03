@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3121/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3121/static/js/index.765cfc49e1.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3121/static/js/index.c5a4b1ba1d.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -217,6 +217,7 @@ See <a href="/agent-device/pr-preview/pr-3121/docs/remote-proxy#human-takeover" 
 <li><code>devices</code> lists available targets after applying any platform selector or isolation scope flags.</li>
 <li>Use <code>--platform</code> to narrow discovery to Apple-family (<code>ios</code>, <code>tvOS</code>, <code>macOS</code>), Android, HarmonyOS, or Vega OS targets.</li>
 <li>Use <code>--ios-simulator-device-set</code> and <code>--android-device-allowlist</code> when you need tenant- or lab-scoped discovery.</li>
+<li>Each listed device carries <code>model</code> (hardware model, for example <code>iPhone 17 Pro</code> or <code>Pixel 9</code>) and <code>osVersion</code> (for example <code>26.1</code> or <code>16</code>) when the platform tooling reports them. iOS simulators read them from <code>simctl</code> device types and runtimes, physical iOS devices from <code>devicectl</code> (or the OS version printed by <code>xctrace</code>), and running Android devices from <code>ro.product.model</code> and <code>ro.build.version.release</code>; Android emulators report the system image model, such as <code>sdk_gphone64_arm64</code>. Stopped AVDs and other platforms omit both fields. They describe a device only and are not selectors.</li>
 <li><code>capabilities</code> reports the command names supported by the selected session device or an explicit <code>--platform</code>/<code>--device</code>/<code>--udid</code>/<code>--serial</code> target.</li>
 <li>In JSON output, <code>capabilities</code> returns <code>{ device, availableCommands }</code>. Use <code>availableCommands</code> for dynamic integrations instead of maintaining a separate platform support table.</li>
 </ul>
