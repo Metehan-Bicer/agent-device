@@ -3,7 +3,6 @@ import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { cleanupRetainedMaterializedPathsForSession } from './materialized-path-registry.ts';
 import type { SessionState } from './session-state.ts';
 import type { SessionStore } from './session-store.ts';
-import { forceCleanupSessionAppLog } from './app-log-session-resource.ts';
 import { appLogResourceStore } from './app-log-resource-store.ts';
 import { finishLiveAudioProbe } from '@agent-device/capture-kit/audio-probe-session-resource';
 import { finishLivePerfCapture } from '@agent-device/capture-kit/perf-capture-session-resource';
@@ -18,6 +17,7 @@ export async function stopSessionAppLog(params: {
 }): Promise<void> {
   const { session, sessionName, sessionStore } = params;
   if (!session.appLog) return;
+  const { forceCleanupSessionAppLog } = await import('./app-log-session-resource.ts');
   await forceCleanupSessionAppLog({
     session,
     sessionName,
