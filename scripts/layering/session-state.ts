@@ -1,43 +1,7 @@
-// Catches: a daemon module writing a SessionState field it does not own — aliasing through
-//   SessionStore.get()/set() lets any module mutate store-owned state, and only a full-graph
-//   AST walk over every assignment site (not a review of one module) can tell whose write
-//   it was.
-// Evidence: PR #1392 (e8b779cb32) fixed a close-time script-save failure leaking the session/
-//   device claim — a symptom of unowned SessionState writes; the field-owner table this file
-//   enforces is the durable fix.
-// Cost: 262 LOC (no dedicated test file; exercised through daemon-modularity.test.ts and
-//   model.test.ts).
-// Kill criterion: none enforced today; retire only by maintainer decision that per-field
-//   SessionState write ownership no longer matters. SessionStore hands out the live record
-//   through get()/set(), so a `session.<field> =` from any module type-checks; no owner exists
-//   at the type level.
-//
-// R7 session-state ownership.
-//
-// `SessionStore.get()` hands back the live `SessionState` out of a private Map, and `set()`
-// re-puts the same reference — so a `session.<field> = …` anywhere in the daemon is a durable
-// write to store-owned state, and whether it persists depends on aliasing rather than on an
-// API call. That is workable while each field has an owner that keeps its invariants; it stops
-// being workable the moment a field's rule is spread across modules, because nothing at the
-// store boundary can check it.
-//
-// So the ownership is written down here and enforced. The table is not an aspiration: it is
-// the set of writers that exist, so the gate's job is to stop the set from growing quietly.
-// Adding a field to `SessionState` forces a deliberate owner; writing an existing field from
-// a new module fails until that module is either declared an owner or, better, calls the
-// owner instead. ADR 0014's ref frame is the worked example, and the one that has since been
-// taken further than this table can go: its four fields moved together across two modules
-// until `activateRefFrame` took the transition, and they are now a single value whose nominal
-// type no other module can construct, edit, or derive from an existing frame.
-//
-// Detection is AST-based (`oxc-parser`, already a devDependency) rather than a line regex. A
-// regex has to enumerate assignment operators, and the ones it forgets are exactly the ones
-// that slip through: `??=` on an optional field is the natural way to write a default, and a
-// computed `session[key] =` hides the field name entirely. The parser reports every
-// assignment and update form for free, and a `session.a.b = …` sub-object write is reported
-// as what it is rather than mistaken for a write to `a`.
+/** SessionState field ownership for assignments, named patches and record copies. */
 
 import { parseSync } from 'oxc-parser';
+import { memberName, memberPath, propertyName, visitAst } from './layering-ast.ts';
 import path from 'node:path';
 
 export type SessionStateWrite = {
@@ -89,14 +53,32 @@ export const SESSION_STATE_FIELD_OWNERS: Readonly<Record<string, readonly string
   trace: ['src/daemon/handlers/trace-runtime.ts'],
   postGestureStabilization: ['src/daemon/deferred-interaction-outcome.ts'],
 
-  // Snapshot lineage on a freshly BUILT record. snapshot-command-runtime.ts constructs a new
-  // SessionState rather than mutating the stored one, so it cannot call setSessionSnapshot —
-  // but the rule is the same, so the two-field transition lives in session-snapshot.ts.
-  appName: ['src/daemon/snapshot-command-runtime.ts'],
+  // App identity follows open, deployment and observation through named patches.
+  appName: [
+    'src/daemon/handlers/session-app-deployment.ts',
+    'src/daemon/session-lifecycle/internal/session-open-state.ts',
+    'src/daemon/snapshot-command-runtime.ts',
+  ],
+  appBundleId: [
+    'src/daemon/handlers/session-app-deployment.ts',
+    'src/daemon/handlers/session-selector-dispatch.ts',
+    'src/daemon/session-lifecycle/internal/session-open-state.ts',
+  ],
+  appLog: ['src/daemon/app-log-session-resource.ts'],
+  appLogFailure: ['src/daemon/app-log-session-resource.ts'],
+  audioProbe: ['src/daemon/session-capture-binding.ts'],
+  perfCapture: ['src/daemon/session-capture-binding.ts'],
+  screenRecording: ['src/daemon/session-capture-binding.ts'],
+  lastPerfProfile: ['src/daemon/session-observability/internal/session-perf-runtime.ts'],
+  device: ['src/daemon/session-lifecycle/internal/session-open-state.ts'],
+  surface: ['src/daemon/session-lifecycle/internal/session-open-state.ts'],
   // Open execution owns the paired lease/claim transition after the handler has admitted one
   // lifecycle binding. Keeping the records together prevents request-policy routing from gaining
   // a second durable owner as the execution seam stays package-bound.
-  lease: ['src/daemon/session-lifecycle/internal/session-open-state.ts'],
+  lease: [
+    'src/daemon/lease-lifecycle.ts',
+    'src/daemon/session-lifecycle/internal/session-open-state.ts',
+  ],
   deviceClaim: ['src/daemon/session-lifecycle/internal/session-open-state.ts'],
 
   // #1398 (ADR 0017 session-scoped echo protection amendment): the ephemeral
@@ -118,23 +100,14 @@ export const SESSION_STATE_FIELD_OWNERS: Readonly<Record<string, readonly string
  */
 export const STORE_OWNED_SESSION_STATE_FIELDS: ReadonlySet<string> = new Set([
   'actions',
-  'appBundleId',
-  'appLog',
-  'appLogFailure',
-  'audioProbe',
   'createdAt',
-  'device',
   // #2833: the request path reports session activity through `SessionStore.noteSessionActivity`, so
   // the only writer of this field is the store that owns the record.
   'lastActivityAtMs',
-  'lastPerfProfile',
   'name',
   'recordOnlySession',
-  'perfCapture',
-  'screenRecording',
   'sessionScope',
   'snapshotDiagnostics',
-  'surface',
 ]);
 
 export function sessionStateFieldCount(): number {
@@ -251,61 +224,257 @@ function lineOf(source: string, offset: number): number {
   return line;
 }
 
-/**
- * Every write to a declared `SessionState` field through a binding named `session`, in any
- * assignment or update form. `session-store.ts` is excluded: it owns the record and may write
- * anything on it.
- *
- * A computed write (`session[key] = …`) cannot be attributed to a field, so it is reported
- * against the sentinel field name `[computed]` — which has no owner and therefore fails,
- * rather than passing unnoticed.
- */
+type AstNode = Record<string, unknown>;
+
+function astNode(value: unknown): AstNode | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as AstNode)
+    : undefined;
+}
+
+function unwrapExpression(value: unknown): AstNode | undefined {
+  let node = astNode(value);
+  while (
+    node &&
+    [
+      'TSAsExpression',
+      'TSSatisfiesExpression',
+      'TSNonNullExpression',
+      'ParenthesizedExpression',
+    ].includes(String(node.type))
+  ) {
+    node = astNode(node.expression);
+  }
+  return node;
+}
+
+function isSessionStoreReceiver(value: unknown, storeBindings: ReadonlySet<string>): boolean {
+  const members = memberPath(value);
+  return members !== undefined && storeBindings.has(members.at(-1)!);
+}
+
+function isSessionRecord(value: unknown, sessionBindings: ReadonlySet<string>): boolean {
+  const node = unwrapExpression(value);
+  return node?.type === 'Identifier'
+    ? sessionBindings.has(String(node.name))
+    : node?.type === 'MemberExpression' && memberName(node) === 'session';
+}
+
+function isSessionRead(value: unknown, storeBindings: ReadonlySet<string>): boolean {
+  const node = unwrapExpression(value);
+  if (!node) return false;
+  if (node.type === 'LogicalExpression') return isSessionRead(node.left, storeBindings);
+  const callee = astNode(node.callee);
+  return (
+    node.type === 'CallExpression' &&
+    callee?.type === 'MemberExpression' &&
+    ['get', 'requireCurrent', 'resolveCurrent'].includes(memberName(callee) ?? '') &&
+    isSessionStoreReceiver(callee.object, storeBindings)
+  );
+}
+
+function hasNamedType(node: AstNode, name: string): boolean {
+  const annotation = astNode(astNode(node.typeAnnotation)?.typeAnnotation);
+  return annotation?.type === 'TSTypeReference' && propertyName(annotation.typeName) === name;
+}
+
+function patchObjects(value: unknown): AstNode[] | undefined {
+  const patch = unwrapExpression(value);
+  if (!patch) return undefined;
+  if (patch.type === 'ObjectExpression') return [patch];
+  if (
+    !['ArrowFunctionExpression', 'FunctionExpression'].includes(String(patch.type)) ||
+    patch.async === true
+  )
+    return undefined;
+  const body = unwrapExpression(patch.body);
+  if (body?.type === 'ObjectExpression') return [body];
+  if (body?.type !== 'BlockStatement') return undefined;
+  const returns: AstNode[] = [];
+  visitAst(body, (node) => {
+    if (node.type === 'ReturnStatement') returns.push(node);
+  });
+  if (returns.length !== 1 || !(body.body as AstNode[]).includes(returns[0]!)) return undefined;
+  const result = unwrapExpression(returns[0]!.argument);
+  return result?.type === 'ObjectExpression' ? [result] : undefined;
+}
+
+const SESSION_STATE_SCAN_ROOTS = ['src/daemon/', 'packages/capture-kit/src/capture-admission/'];
+const SESSION_DRAFT_CONSTRUCTORS: Readonly<Record<string, string>> = {
+  'src/daemon/session-lifecycle/internal/session-open-state.ts': 'publishOpenSession',
+  'src/daemon/snapshot-session.ts': 'createSnapshotSession',
+  'src/daemon/handlers/record-runtime.ts': 'createRecordOnlySession',
+};
+
+/** Assignments, named update keys and whole-record copies at the session ownership seam. */
 export function findSessionStateWrites(
   sources: ReadonlyMap<string, string>,
   fields: readonly string[],
 ): SessionStateWrite[] {
   const declared = new Set(fields);
   const writes: SessionStateWrite[] = [];
-
   for (const [file, source] of sources) {
-    if (!file.startsWith('src/daemon/')) continue;
+    if (!SESSION_STATE_SCAN_ROOTS.some((root) => file.startsWith(root))) continue;
     if (path.posix.basename(file) === 'session-store.ts') continue;
-
-    const parsed = parseSync(file, source);
-    const visit = (node: unknown): void => {
-      if (node === null || typeof node !== 'object') return;
-      if (Array.isArray(node)) {
-        for (const child of node) visit(child);
-        return;
+    const program = parseSync(file, source).program;
+    const sessionBindings = new Set<string>();
+    const storeBindings = new Set(['store', 'sessionStore']);
+    const aliases: Array<readonly [string, unknown]> = [];
+    const patches = new Set<AstNode>();
+    const report = (node: AstNode, field: string): void => {
+      writes.push({ file, line: lineOf(source, Number(node.start ?? 0)), field });
+    };
+    visitAst(program, (node) => {
+      if (node.type === 'Identifier') {
+        if (isSessionBinding(String(node.name)) || hasNamedType(node, 'SessionState'))
+          sessionBindings.add(String(node.name));
+        if (hasNamedType(node, 'SessionStore')) storeBindings.add(String(node.name));
       }
-      const record = node as Record<string, unknown>;
-      const target = writeTarget(record);
-      if (target && target.object !== undefined && isSessionBinding(target.object)) {
-        if (target.computed) {
-          writes.push({ file, line: lineOf(source, target.offset), field: '[computed]' });
-        } else if (target.field !== undefined && declared.has(target.field)) {
-          writes.push({ file, line: lineOf(source, target.offset), field: target.field });
+      if (node.type === 'VariableDeclarator') {
+        const id = astNode(node.id);
+        if (id?.type === 'Identifier') aliases.push([String(id.name), node.init]);
+      }
+      if (node.type === 'ObjectPattern') {
+        for (const property of node.properties as AstNode[]) {
+          if (property.type !== 'Property') continue;
+          const field = propertyName(property.key);
+          const value = astNode(property.value);
+          const binding = value?.type === 'AssignmentPattern' ? astNode(value.left) : value;
+          if (binding?.type !== 'Identifier') continue;
+          if (field === 'session') sessionBindings.add(String(binding.name));
+          if (field === 'store' || field === 'sessionStore')
+            storeBindings.add(String(binding.name));
         }
       }
-      for (const key of Object.keys(record)) visit(record[key]);
+    });
+    const inheritAliases = (): void => {
+      let added: boolean;
+      do {
+        added = false;
+        for (const [name, value] of aliases) {
+          if (!storeBindings.has(name) && isSessionStoreReceiver(value, storeBindings)) {
+            storeBindings.add(name);
+            added = true;
+          }
+          if (
+            !sessionBindings.has(name) &&
+            (isSessionRecord(value, sessionBindings) || isSessionRead(value, storeBindings))
+          ) {
+            sessionBindings.add(name);
+            added = true;
+          }
+        }
+      } while (added);
     };
-    visit(parsed.program);
+    inheritAliases();
+    visitAst(program, (node) => {
+      const callee = astNode(node.callee);
+      const args = node.arguments as unknown[] | undefined;
+      if (
+        node.type !== 'CallExpression' ||
+        callee?.type !== 'MemberExpression' ||
+        memberName(callee) !== 'update' ||
+        args?.length !== 2 ||
+        !isSessionStoreReceiver(callee.object, storeBindings)
+      )
+        return;
+      const patch = unwrapExpression(args[1]);
+      const objects = patchObjects(args[1]);
+      if (!objects) {
+        report(patch ?? node, '[patch-shape]');
+        return;
+      }
+      if (patch?.type !== 'ObjectExpression') {
+        const binding = astNode((patch?.params as unknown[])?.[0]);
+        if (binding?.type === 'Identifier') sessionBindings.add(String(binding.name));
+        visitAst(patch?.body, (inner) => {
+          const target = astNode(inner.callee);
+          if (
+            inner.type === 'CallExpression' &&
+            target?.type === 'MemberExpression' &&
+            isSessionStoreReceiver(target.object, storeBindings)
+          )
+            report(inner, '[reentrant-patch]');
+        });
+      }
+      for (const object of objects) {
+        patches.add(object);
+        for (const property of object.properties as AstNode[]) {
+          if (
+            property.type !== 'Property' ||
+            property.computed === true ||
+            property.method === true ||
+            property.kind !== 'init'
+          )
+            report(property, '[patch-shape]');
+          else report(property, propertyName(property.key) ?? '[patch-shape]');
+        }
+      }
+    });
+    inheritAliases();
+    const walk = (value: unknown, ancestors: readonly AstNode[]): void => {
+      if (Array.isArray(value)) {
+        for (const child of value) walk(child, ancestors);
+        return;
+      }
+      const node = astNode(value);
+      if (!node) return;
+      const target = writeTarget(node);
+      if (target?.object !== undefined && sessionBindings.has(target.object)) {
+        if (target.computed) report(node, '[computed]');
+        else if (target.field !== undefined && declared.has(target.field))
+          report(node, target.field);
+      }
+      if (node.type === 'ObjectExpression' && !patches.has(node)) {
+        const properties = node.properties as AstNode[];
+        const copiesRecord = properties.some((property) => {
+          if (property.type !== 'SpreadElement') return false;
+          return isSessionRecord(property.argument, sessionBindings);
+        });
+        if (copiesRecord) {
+          const enclosingFunction = [...ancestors]
+            .reverse()
+            .find((ancestor) =>
+              ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
+                String(ancestor.type),
+              ),
+            );
+          const constructor = propertyName(enclosingFunction?.id);
+          const parent = ancestors.at(-1);
+          const publishedDraft = file.endsWith('/session-open-state.ts')
+            ? parent?.type === 'CallExpression' &&
+              memberName(astNode(parent.callee) ?? {}) === 'publish' &&
+              (parent.arguments as unknown[])[1] === node
+            : true;
+          const draft = SESSION_DRAFT_CONSTRUCTORS[file];
+          if (!draft || constructor !== draft || !publishedDraft) {
+            report(node, '[whole-record-spread]');
+            for (const property of properties) {
+              const field = propertyName(property.key);
+              if (property.type === 'Property' && declared.has(field ?? ''))
+                report(property, field!);
+            }
+          }
+        }
+      }
+      for (const child of Object.values(node)) walk(child, [...ancestors, node]);
+    };
+    walk(program, []);
   }
-
   return writes.sort(
     (left, right) => left.file.localeCompare(right.file) || left.line - right.line,
   );
 }
 
 export type SessionStateWritePressure = Readonly<{
-  /** Declared fields that some daemon module writes directly. */
+  /** Declared fields written by an owner through assignments, patches or record copies. */
   writerOwnedFields: number;
   /** Distinct (field, writing module) pairs — what `SESSION_STATE_FIELD_OWNERS` claims. */
   ownerFileClaims: number;
 }>;
 
 /**
- * R10's measurement of R7 pressure: how many declared fields have a direct writer, and how many
+ * R10 measures how many declared fields have a writer, and how many
  * module claims that takes. Read from the tree rather than from the ownership table, so the same
  * function measures a merge-base tree whose table is not in scope. On a tree R7 accepts, both
  * numbers equal the table's own size.
@@ -315,10 +484,11 @@ export function sessionStateWritePressure(
 ): SessionStateWritePressure {
   const declarationFile = sessionStateDeclarationFile(sources);
   if (!declarationFile) return { writerOwnedFields: 0, ownerFileClaims: 0 };
-  const writes = findSessionStateWrites(
-    sources,
-    sessionStateFields(sources.get(declarationFile)!),
-  ).filter((write) => write.field !== '[computed]');
+  const fields = sessionStateFields(sources.get(declarationFile)!);
+  const declared = new Set(fields);
+  const writes = findSessionStateWrites(sources, fields).filter((write) =>
+    declared.has(write.field),
+  );
   return {
     writerOwnedFields: new Set(writes.map((write) => write.field)).size,
     ownerFileClaims: new Set(writes.map((write) => `${write.field}\0${write.file}`)).size,
