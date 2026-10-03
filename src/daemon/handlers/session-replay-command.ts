@@ -112,7 +112,6 @@ export function createReplaySession(
     const session = store.get(name);
     if (!session) return false;
     mutate(session);
-    store.set(name, session);
     return true;
   };
   // One read set for both views: the narrowed one the port binds over, and the full-record one the
@@ -149,8 +148,8 @@ export function createReplaySession(
       }),
     bindAuthority: (signal) =>
       bindInternalObservationAuthority({
-        sessionStore: { get: () => store.get(name), update: updateSession },
-        sessionName: name,
+        sessionStore: store,
+        ref: store.lookup(name),
         ...(signal ? { signal } : {}),
       }),
     capture: async ({ flags, logPath: captureLogPath }) => {

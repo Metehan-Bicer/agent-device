@@ -304,6 +304,7 @@ async function captureDivergenceObservationAttempt(params: {
 }): Promise<DivergenceCaptureAttempt> {
   const { session, observationStore, logPath, flags } = params;
   try {
+    const observationAuthority = observationStore.bindAuthority();
     const capture = await observationStore.capture({ flags, logPath });
     const snapshot = capture.snapshot;
     if (isSparseSnapshotQualityVerdict(snapshot.snapshotQuality)) {
@@ -316,7 +317,6 @@ async function captureDivergenceObservationAttempt(params: {
         retryable: true,
       };
     }
-    const observationAuthority = observationStore.bindAuthority();
     const stored = observationAuthority.store(snapshot);
     return {
       observation: {

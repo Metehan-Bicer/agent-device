@@ -82,3 +82,52 @@ test('captureDivergenceObservation retryLaunchRace: the 12s deadline bounds retr
     vi.useRealTimers();
   }
 });
+
+test.each(['rebuild', 'retire'] as const)(
+  'divergence capture binds observation authority before awaiting the native capture: %s',
+  async (change) => {
+    const root = mkdtempForTestSync('agent-device-divergence-lifetime-');
+    const store = new SessionStore(path.join(root, 'sessions'));
+    const session = makeIosSession('default', { appBundleId: 'com.example.app' });
+    const ref = store.publish('cwd:worktree:default', session);
+    const replay = replayDivergenceForTest(store, ref.address);
+    let captured!: (value: Record<string, unknown>) => void;
+    let started!: () => void;
+    const capturing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    mockDispatchCommand.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          captured = resolve;
+          started();
+        }),
+    );
+    const pending = captureDivergenceObservation({
+      session: replay.session!,
+      observationStore: replay.observationStore,
+      logPath: path.join(root, 'daemon.log'),
+      action: { command: 'click', positionals: ['label="Save"'], flags: {} },
+    });
+    await capturing;
+    let current;
+    if (change === 'rebuild') current = store.update(ref, { appName: 'Latest app' });
+    else {
+      store.retire(ref);
+      current = makeIosSession('default', { appBundleId: 'com.example.successor' });
+      store.publish(ref.address, current);
+    }
+    captured({ nodes: [{ index: 0, depth: 0, type: 'Button', ref: 'e2', label: 'Save' }] });
+    const result = await pending;
+    expect(store.get(ref.address)).toBe(current);
+    expect(store.get('default')).toBeUndefined();
+    if (change === 'rebuild') {
+      expect(result.state).toBe('available');
+      expect(current.appName).toBe('Latest app');
+      expect(current.snapshot?.nodes[0]?.label).toBe('Save');
+    } else {
+      expect(result.state).toBe('unavailable');
+      expect(current.snapshot).toBeUndefined();
+    }
+  },
+);
