@@ -1,4 +1,3 @@
-import { bindInteractionSession } from '../interaction/index.ts';
 import {
   createBoundTouchExecutor,
   resolveBoundTouchRuntime,
@@ -18,6 +17,7 @@ import { isSparseSnapshotQualityVerdict } from '@agent-device/capture-kit/snapsh
 import type { DaemonResponse } from '../daemon-request.ts';
 import type { SessionState } from '../session-state.ts';
 import {
+  bindInteractionSession,
   captureSnapshotForSession,
   finalizeTouchInteraction,
   type InteractionRouteInput,

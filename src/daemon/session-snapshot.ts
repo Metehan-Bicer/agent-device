@@ -2,7 +2,8 @@ import { randomInt } from 'node:crypto';
 import type { SettleObservation } from '@agent-device/contracts/interaction';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { activatePartialRefFrame, refFrameEpoch, refFrameState } from './ref-frame.ts';
-import type { SessionState } from './session-state.ts';
+import type { SessionRef, SessionState } from './session-state.ts';
+import type { SessionStore } from './session-store.ts';
 
 /**
  * Warning attached to a read of an `@ref` argument once the ref frame has
@@ -120,10 +121,12 @@ export function markSessionPartialRefsIssued(session: SessionState, refs: Iterab
  * rule has one implementation beside the partial-frame primitive it wraps.
  */
 export function issueSettleRefs(
-  session: SessionState,
+  ref: SessionRef | undefined,
+  sessionStore: SessionStore,
   settle: SettleObservation | undefined,
 ): number | undefined {
-  if (!settle?.diff) return undefined;
+  if (!ref || !settle?.diff) return undefined;
+  const session = sessionStore.requireCurrent(ref);
   markSessionPartialRefsIssued(session, collectSettleIssuedRefBodies(settle));
   return session.snapshotGeneration;
 }
