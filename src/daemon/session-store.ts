@@ -12,6 +12,7 @@ import {
 } from './session-artifact-paths.ts';
 import {
   readRepairTombstoneFile,
+  clearRepairTombstoneFile,
   resolveRepairTombstonePath,
   type RepairSessionTombstone,
 } from '../session-repair-tombstone.ts';
@@ -357,14 +358,12 @@ export class SessionStore {
 
   /** Returns a non-expired repair tombstone for `sessionName`, or `undefined`. */
   readRepairTombstone(sessionName: string): RepairSessionTombstone | undefined {
-    return readRepairTombstoneFile(this.repairTombstonePath(sessionName));
+    return readRepairTombstoneFile(this.repairTombstonePath(sessionName), sessionName);
   }
 
   /** ADR 0012 R7 (C5a): a fresh `replay --save-script` on this key clears the tombstone. */
   clearRepairTombstone(sessionName: string): void {
-    try {
-      fs.rmSync(this.repairTombstonePath(sessionName), { force: true });
-    } catch {}
+    clearRepairTombstoneFile(this.repairTombstonePath(sessionName), sessionName);
   }
 
   /**

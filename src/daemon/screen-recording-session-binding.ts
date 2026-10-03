@@ -17,8 +17,7 @@ export function bindRecordOnlyScreenRecording(
     canPersist: () => !published && sessionStore.lookup(address) === undefined,
     adopt: (screenRecording) => {
       sessionStore.assertPublishable(address);
-      draft.screenRecording = screenRecording;
-      published = sessionStore.publish(address, draft);
+      published = sessionStore.publish(address, { ...draft, screenRecording });
     },
     clear: (expected) =>
       published ? bindSessionScreenRecording(sessionStore, published).clear(expected) : 'retired',

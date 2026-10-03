@@ -31,15 +31,28 @@ export function resolveRepairTombstonePath(sessionDir: string): string {
 }
 
 /** Parses/validates a tombstone file at `tombstonePath`; `undefined` if missing, malformed, or expired. */
-export function readRepairTombstoneFile(tombstonePath: string): RepairSessionTombstone | undefined {
+export function readRepairTombstoneFile(
+  tombstonePath: string,
+  owner: string,
+): RepairSessionTombstone | undefined {
   try {
-    return readRepairTombstoneForCleanup(tombstonePath);
+    const tombstone = readRepairTombstone(tombstonePath);
+    return tombstone?.owner === owner && tombstone.expiresAt > Date.now() ? tombstone : undefined;
   } catch {
     return undefined;
   }
 }
 
-function readRepairTombstoneForCleanup(tombstonePath: string): RepairSessionTombstone | undefined {
+/** Removes only a parseable marker belonging to the requested session, including expired markers. */
+export function clearRepairTombstoneFile(tombstonePath: string, owner: string): void {
+  try {
+    if (readRepairTombstone(tombstonePath)?.owner === owner) {
+      fs.rmSync(tombstonePath, { force: true });
+    }
+  } catch {}
+}
+
+function readRepairTombstone(tombstonePath: string): RepairSessionTombstone | undefined {
   let raw: string;
   try {
     raw = fs.readFileSync(tombstonePath, 'utf8');
@@ -47,8 +60,7 @@ function readRepairTombstoneForCleanup(tombstonePath: string): RepairSessionTomb
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
-  const parsed = parseRepairTombstone(raw, tombstonePath);
-  return parsed.expiresAt > Date.now() ? parsed : undefined;
+  return parseRepairTombstone(raw, tombstonePath);
 }
 
 function parseRepairTombstone(raw: string, tombstonePath: string): RepairSessionTombstone {
@@ -110,10 +122,10 @@ export function findUnrecoveredRepairCommitFailure(sessionsDir: string):
   }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const tombstone = readRepairTombstoneForCleanup(
+    const tombstone = readRepairTombstone(
       resolveRepairTombstonePath(path.join(sessionsDir, entry.name)),
     );
-    if (tombstone?.commitFailure) {
+    if (tombstone?.commitFailure && tombstone.expiresAt > Date.now()) {
       return {
         sessionName: entry.name,
         tombstone: { ...tombstone, commitFailure: tombstone.commitFailure },

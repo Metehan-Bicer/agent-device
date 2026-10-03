@@ -8,7 +8,8 @@ import {
   makeRepairArmedSession,
   authoringPublication,
 } from '../../__tests__/test-utils/session-factories.ts';
-import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
+import { makeSessionStore, storeSessionForTest } from '../../__tests__/test-utils/store-factory.ts';
+import { resolveRepairTombstonePath } from '../../session-repair-tombstone.ts';
 
 const ADDRESS = 'cwd:worktree:default';
 
@@ -170,4 +171,41 @@ test('repair tombstones follow the scoped address and cannot be written by a ret
   store.writeRepairTombstone(ref);
   assert.equal(store.readRepairTombstone(ADDRESS), undefined);
   assert.equal(store.requireCurrent(successor), successor.session);
+});
+
+test('test session publication uses its explicit scoped address', () => {
+  const store = makeSessionStore();
+  const session = makeSession('default');
+  const ref = store.publish(ADDRESS, session);
+  const stored = storeSessionForTest(store, session, ADDRESS);
+  assert.equal(stored.lifetime, ref.lifetime);
+  assert.equal(stored.session, session);
+  assert.equal(store.get('default'), undefined);
+  assert.equal(store.listRefs().length, 1);
+});
+
+test('colliding artifact directories cannot share or clear another address\u2019s repair tombstone', () => {
+  const store = makeSessionStore();
+  const collision = 'cwd_worktree_default';
+  const ref = store.publish(ADDRESS, makeRepairArmedSession('default'));
+  assert.equal(store.resolveSessionDir(ADDRESS), store.resolveSessionDir(collision));
+  store.writeRepairTombstone(ref);
+  assert.equal(store.readRepairTombstone(ADDRESS)?.owner, ADDRESS);
+  assert.equal(store.readRepairTombstone(collision), undefined);
+  store.clearRepairTombstone(collision);
+  assert.equal(store.readRepairTombstone(ADDRESS)?.owner, ADDRESS);
+  store.clearRepairTombstone(ADDRESS);
+  assert.equal(store.readRepairTombstone(ADDRESS), undefined);
+});
+
+test('tombstone cleanup retains malformed evidence and removes an expired owned marker', () => {
+  const store = makeSessionStore();
+  const tombstonePath = resolveRepairTombstonePath(store.resolveSessionDir(ADDRESS));
+  fs.mkdirSync(store.resolveSessionDir(ADDRESS), { recursive: true });
+  fs.writeFileSync(tombstonePath, '{');
+  store.clearRepairTombstone(ADDRESS);
+  assert.equal(fs.readFileSync(tombstonePath, 'utf8'), '{');
+  fs.writeFileSync(tombstonePath, JSON.stringify({ owner: ADDRESS, expiresAt: 0, reapedAt: 0 }));
+  store.clearRepairTombstone(ADDRESS);
+  assert.equal(fs.existsSync(tombstonePath), false);
 });

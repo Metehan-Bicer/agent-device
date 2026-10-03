@@ -484,12 +484,15 @@ async function waitForCutoverFixture(ready: () => boolean): Promise<void> {
   assert.fail('cutover fixture did not reach its barrier');
 }
 
-function legacyDisposition(paths: DaemonPaths): boolean {
-  return (
-    JSON.parse(fs.readFileSync(path.join(paths.baseDir, 'legacy-disposition.json'), 'utf8')) as {
-      acquired: boolean;
-    }
-  ).acquired;
+function legacyDisposition(paths: DaemonPaths): boolean | undefined {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(paths.baseDir, 'legacy-disposition.json'), 'utf8'),
+    ) as { acquired?: unknown };
+    return typeof parsed.acquired === 'boolean' ? parsed.acquired : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 test('cutover refuses an already-running legacy daemon before signaling or changing registration', async () => {
@@ -542,9 +545,7 @@ test('a legacy contender cannot unlink a hardened owner while it delays metadata
   try {
     await waitForCutoverFixture(() => fs.existsSync(path.join(paths.baseDir, 'registration-held')));
     legacy = spawnLegacyDaemonFixture(paths);
-    await waitForCutoverFixture(() =>
-      fs.existsSync(path.join(paths.baseDir, 'legacy-disposition.json')),
-    );
+    await waitForCutoverFixture(() => legacyDisposition(paths) !== undefined);
     assert.equal(legacyDisposition(paths), false);
     await legacy.exited;
     const claim = inspectProcessLock(paths.lockPath);
@@ -580,7 +581,7 @@ test('concurrent old and new daemon startup has one owner at the shared lock pat
     fs.writeFileSync(barrier, 'start');
     await waitForCutoverFixture(
       () =>
-        fs.existsSync(path.join(paths.baseDir, 'legacy-disposition.json')) &&
+        legacyDisposition(paths) !== undefined &&
         (currentExited || fs.existsSync(path.join(paths.baseDir, 'registration-held'))),
     );
     const oldAcquired = legacyDisposition(paths);
