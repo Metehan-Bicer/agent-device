@@ -446,6 +446,7 @@ test('daemon acquisition reclaims a proven reused owner before publication', asy
     if (freshLock.state === 'held') assert.notEqual(freshLock.owner.startTime, 'stale-start-time');
     assert.deepEqual(daemon.seenPaths, ['GET /health', 'POST /rpc']);
   } finally {
+    if (stale.status === 'acquired') await stale.acquisition.release();
     await closeLoopbackServer(daemon.server);
     await finishRegisteredDaemonFixture(stateDir);
   }

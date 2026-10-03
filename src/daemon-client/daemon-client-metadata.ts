@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { inspectProcessLock, type ProcessLockInspection } from '@agent-device/host-kit/file';
 import { AppError } from '@agent-device/kernel/errors';
 import { stopDaemonProcess, type DaemonTerminationResult } from '../daemon-process.ts';
 
@@ -31,7 +30,6 @@ export type DaemonInfo = {
 export type DaemonMetadataState = {
   hasInfo: boolean;
   hasLock: boolean;
-  registration: ProcessLockInspection;
 };
 
 const DAEMON_TAKEOVER_TERM_TIMEOUT_MS = 3000;
@@ -99,7 +97,6 @@ export function getDaemonMetadataState(paths: DaemonPaths): DaemonMetadataState 
   return {
     hasInfo: fs.existsSync(paths.infoPath),
     hasLock: fs.existsSync(paths.lockPath),
-    registration: inspectProcessLock(paths.lockPath),
   };
 }
 

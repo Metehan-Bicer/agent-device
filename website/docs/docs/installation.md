@@ -126,4 +126,4 @@ Startup refuses legacy lock files and unverified ownership. Confirm every user o
 
 Packaged installs default to `~/.agent-device`; source checkouts use a worktree directory under `~/.agent-device/dev/`. `AGENT_DEVICE_STATE_DIR` or `--state-dir` overrides either default.
 
-For source checkouts, `pnpm clean:daemon --prune-dev` selects development directories with no activity for 14 days, using their newest mtime. It retires only confirmed abandoned registration and retains shared directories, session artifacts and logs.
+For source checkouts, `pnpm clean:daemon --prune-dev` selects development directories with no activity for 14 days, using the newest mtime of the directory and its immediate children. It retires only registration it can confirm abandoned. Directories, session artifacts and logs remain.

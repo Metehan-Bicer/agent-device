@@ -66,9 +66,11 @@ export type EnsuredDaemon = {
 type DaemonStartupWaitResult =
   | { kind: 'ready'; daemon: EnsuredDaemon }
   | { kind: 'early_exit'; exit: ExecDetachedExit }
-  | { kind: 'retry' | 'unproven' | 'timeout' };
+  | { kind: 'unproven'; error: AppError }
+  | { kind: 'retry' | 'timeout' };
 
 const DAEMON_STARTUP_TIMEOUT_MS = 15_000;
+const MINIMUM_DAEMON_TAKEOVER_BUDGET_MS = 5_000;
 const LIVE_DAEMON_PROBE_RETRIES = 3;
 const LIVE_DAEMON_PROBE_RETRY_DELAY_MS = 200;
 const DAEMON_STARTUP_ATTEMPTS = 2;
@@ -191,16 +193,10 @@ async function readReusableLocalDaemon(
   deadline?: number,
 ): Promise<DaemonInfo | null> {
   const inspection = inspectProcessLock(settings.paths.lockPath);
-  if (inspection.state === 'unproven') {
-    throw new AppError('COMMAND_FAILED', 'Daemon registration ownership could not be verified.', {
-      reason: 'daemon_registration_unproven',
-      inspection,
-      stateDir: settings.paths.baseDir,
-      hint: resolveDaemonStartupHint(getDaemonMetadataState(settings.paths), settings.paths),
-    });
-  }
+  if (inspection.state === 'unproven') throw daemonRegistrationUnprovenError(settings, inspection);
   const existing = readDaemonInfo(settings.paths.infoPath);
   if (!existing) return null;
+  if (!registrationAllowsDaemonObservation(inspection, existing)) return null;
 
   const decision = await resolveDaemonTakeover(existing, {
     onClientTransport: () =>
@@ -212,10 +208,34 @@ async function readReusableLocalDaemon(
     throw newerDaemonRefusedError(existing, decision, settings.paths.baseDir);
   }
 
-  if (deadline !== undefined && Date.now() >= deadline) return null;
+  if (remainingStartupBudget(deadline) < MINIMUM_DAEMON_TAKEOVER_BUDGET_MS) return null;
   emitDaemonTakeoverNotice(existing, decision.reason, settings.paths.baseDir);
   await retireDaemonForTakeover(existing, settings.paths);
   return null;
+}
+
+function registrationAllowsDaemonObservation(
+  inspection: ProcessLockInspection,
+  info: DaemonInfo,
+): boolean {
+  return (
+    inspection.state === 'absent' ||
+    (inspection.state === 'held' &&
+      inspection.owner.pid === info.pid &&
+      inspection.owner.startTime === (info.processStartTime ?? null))
+  );
+}
+
+function daemonRegistrationUnprovenError(
+  settings: DaemonClientSettings,
+  inspection?: ProcessLockInspection,
+): AppError {
+  return new AppError('COMMAND_FAILED', 'Daemon registration ownership could not be verified.', {
+    reason: 'daemon_registration_unproven',
+    inspection,
+    stateDir: settings.paths.baseDir,
+    hint: resolveDaemonStartupHint(getDaemonMetadataState(settings.paths), settings.paths),
+  });
 }
 
 async function retireDaemonForTakeover(existing: DaemonInfo, paths: DaemonPaths): Promise<void> {
@@ -328,6 +348,7 @@ function emitDaemonTakeoverNotice(info: DaemonInfo, reason: string, stateDir: st
 type FailedDaemonStartup = {
   cleanup?: DaemonRetirementResult;
   startError?: string;
+  startupError?: NormalizedError;
   daemonProcess?: ExecDetachedExit | { pid: number };
   retry: boolean;
 };
@@ -346,6 +367,7 @@ async function startLocalDaemon(settings: DaemonClientSettings): Promise<Ensured
     if (!result.retry) break;
     await sleep(Math.min(150, Math.max(0, deadline - Date.now())));
   }
+  const { startError, startupError, daemonProcess }: Partial<FailedDaemonStartup> = failure ?? {};
   const state = getDaemonMetadataState(settings.paths);
   const daemonLogTail = readRecentLogTail(settings.paths.logPath);
   throw new AppError('COMMAND_FAILED', 'Failed to start daemon', {
@@ -357,8 +379,9 @@ async function startLocalDaemon(settings: DaemonClientSettings): Promise<Ensured
     startupTimeoutMs: DAEMON_STARTUP_TIMEOUT_MS,
     startupAttempts: attempts,
     cleanupResults,
-    startError: failure?.startError,
-    daemonProcess: failure?.daemonProcess,
+    startError,
+    startupError,
+    daemonProcess,
     ...(daemonLogTail ? { daemonLogTail } : {}),
     metadataState: state,
     hint: resolveDaemonStartupHint(state, settings.paths),
@@ -388,9 +411,11 @@ async function attemptLocalDaemonStartup(
   if (startup.kind === 'ready') return { daemon: startup.daemon };
   if (startup.kind === 'retry') return { retry: true };
   if (startup.kind === 'unproven') {
+    const startupError = normalizeError(startup.error);
     return {
       retry: false,
-      startError: 'Daemon registration ownership could not be verified.',
+      startError: startupError.message,
+      startupError,
       daemonProcess: { pid: launch.pid },
     };
   }
@@ -712,7 +737,8 @@ async function waitForDaemonStartup(
   while (Date.now() < deadline) {
     if (earlyExit) {
       const kind = classifyDaemonStartupExit(earlyExit);
-      if (kind === 'unproven') return { kind: 'unproven' };
+      if (kind === 'unproven')
+        return { kind: 'unproven', error: daemonRegistrationUnprovenError(settings) };
       if (kind === 'failed') return { kind: 'early_exit', exit: earlyExit };
       const contender = await observeContendingDaemon(settings, deadline);
       if (contender) return contender;
@@ -741,11 +767,19 @@ async function observeContendingDaemon(
   settings: DaemonClientSettings,
   deadline: number,
 ): Promise<DaemonStartupWaitResult | null> {
-  const winner = await readReusableLocalDaemon(settings, deadline);
+  let winner: DaemonInfo | null;
+  try {
+    winner = await readReusableLocalDaemon(settings, deadline);
+  } catch (error) {
+    if (error instanceof AppError && error.details?.reason === 'daemon_registration_unproven')
+      return { kind: 'unproven', error };
+    throw error;
+  }
   if (Date.now() >= deadline) return null;
   if (winner) return { kind: 'ready', daemon: { info: winner, startedByClient: false } };
   const inspection = inspectProcessLock(settings.paths.lockPath);
-  if (inspection.state === 'unproven') return { kind: 'unproven' };
+  if (inspection.state === 'unproven')
+    return { kind: 'unproven', error: daemonRegistrationUnprovenError(settings, inspection) };
   return isRegistrationAvailable(inspection) ? { kind: 'retry' } : null;
 }
 

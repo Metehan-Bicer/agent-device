@@ -76,6 +76,10 @@ for (const command of ['devices', 'test']) {
     fs.writeFileSync(deferred, 'wait');
     const winner = spawnRegisteredDaemonFixture(paths, fields(http.port), { stdio: 'ignore' });
     await awaitFile(path.join(paths.baseDir, 'registration-held'));
+    fs.writeFileSync(
+      paths.infoPath,
+      JSON.stringify({ ...fields(http.port, '0.0.1'), pid: 999_999_999, processStartTime: 'old' }),
+    );
     let joined = false;
     let genuineExit: ExecDetachedExit | undefined;
     let contender: ReturnType<typeof runCmdDetachedMonitored> | undefined;
@@ -250,7 +254,10 @@ for (const held of [true, false]) {
   });
 }
 
-test('a joined busy contender retires an older winner before relaunching', async (t) => {
+test.for([
+  { budget: 'ample', offset: 0, launches: 2, alive: false, rpcs: 1 },
+  { budget: 'near deadline', offset: 11_000, launches: 1, alive: true, rpcs: 0 },
+])('an older winner is replaced only with enough startup time ($budget)', async (expected, t) => {
   if (!(await supportsLoopbackBind())) return t.skip('loopback unavailable');
   const paths = resolveDaemonPaths(mkdtempForTestSync('daemon-start-older-winner-'));
   const http = await startHttpDaemonFixture({ devices: [] });
@@ -260,6 +267,9 @@ test('a joined busy contender retires an older winner before relaunching', async
     stdio: 'ignore',
   });
   await awaitFile(path.join(paths.baseDir, 'registration-held'));
+  const wallTime = Date.now;
+  let offset = 0;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => wallTime() + offset);
   let joined = false;
   spawn.mockImplementation((_command, _args, options) => {
     if (spawn.mock.calls.length > 1) assert.equal(joined, true);
@@ -272,20 +282,30 @@ test('a joined busy contender retires an older winner before relaunching', async
     return child;
   });
   pause.mockImplementation(async (ms) => {
-    if (joined) fs.rmSync(deferred, { force: true });
-    await actualRetry.sleep(ms);
+    if (joined) {
+      fs.rmSync(deferred, { force: true });
+      if (expected.offset) offset = offset ? offset + ms : expected.offset;
+    }
+    await actualRetry.sleep(10);
   });
   const notice = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
-    assert.equal((await sendToDaemon(request(paths))).ok, true);
-    await winner.exited;
-    assert.equal(isProcessAlive(winner.pid), false);
-    assert.equal(spawn.mock.calls.length, 2);
-    assert.equal(http.rpcRequests.length, 1);
-    assert.ok(
+    const pending = sendToDaemon(request(paths));
+    if (expected.alive) await assert.rejects(pending);
+    else {
+      assert.equal((await pending).ok, true);
+      await winner.exited;
+    }
+    assert.equal(joined, true);
+    assert.equal(isProcessAlive(winner.pid), expected.alive);
+    assert.equal(spawn.mock.calls.length, expected.launches);
+    assert.equal(http.rpcRequests.length, expected.rpcs);
+    assert.equal(
       notice.mock.calls.flat().join('').includes(`Replacing daemon (pid ${winner.pid}, v0.0.1)`),
+      !expected.alive,
     );
   } finally {
+    clock.mockRestore();
     notice.mockRestore();
     await closeLoopbackServer(http.server);
   }
