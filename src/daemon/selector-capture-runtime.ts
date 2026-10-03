@@ -26,7 +26,6 @@ const SELECTOR_CAPTURE_CACHE_TTL_MS = 750;
 export type SelectorCaptureRuntimeParams = {
   ref: SessionRef | undefined;
   device: SessionState['device'];
-  session: SessionState | undefined;
   sessionStore: SessionStore;
   sessionName: string;
   req: DaemonRequest;

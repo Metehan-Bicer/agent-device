@@ -605,7 +605,7 @@ test('fresh open does not publish when its artifact directory cannot be created'
   fs.writeFileSync(path.dirname(store.resolveSessionDir('cwd:held-open:default')), 'blocked');
   await expect(
     invokeHeldOpen(store, { runtime: { metroHost: 'new-host', metroPort: 9000 } }),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ code: 'ENOTDIR' });
   expect(mockDispatch).toHaveBeenCalled();
   expect(store.get('cwd:held-open:default')).toBeUndefined();
   expect(store.getRuntimeHints('cwd:held-open:default')).toBeUndefined();

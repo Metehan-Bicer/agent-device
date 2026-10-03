@@ -101,6 +101,59 @@ function selectorResult(readiness?: { polls: number; waitedMs: number }): PressC
 
 const WAITED_SELECTOR_RESULT = selectorResult({ polls: 3, waitedMs: 400 });
 
+test.each([false, true])('selector-touch observation after retirement=%s', async (retired) => {
+  const sessionStore = makeSessionStore();
+  const address = 'cwd:selector-touch-response:default';
+  const session = makeSession('default');
+  session.snapshot = {
+    nodes: attachRefs([{ index: 0, type: 'Button', label: 'Continue' }]),
+    createdAt: Date.now(),
+    backend: 'xctest',
+  };
+  session.snapshotGeneration = 3;
+  const ref = sessionStore.publish(address, session);
+  const result: PressCommandResult = {
+    ...selectorResult(),
+    settle: {
+      settled: true,
+      waitedMs: 25,
+      captures: 2,
+      quietMs: 25,
+      timeoutMs: 2000,
+      diff: {
+        summary: { additions: 1, removals: 0, unchanged: 0 },
+        lines: [{ kind: 'added', text: 'Continue', ref: 'e1' }],
+      },
+    },
+  };
+  let successor;
+  if (retired) {
+    sessionStore.retire(ref);
+    successor = sessionStore.publish(address, makeSession('default'));
+  }
+  const payloads = await buildTargetedTouchResponsePayloads({
+    params: {
+      req: { token: 't', command: 'press', positionals: ['@e1'], session: 'default' },
+      sessionName: address,
+      sessionRef: ref,
+      sessionStore,
+      contextFromFlags,
+      captureSnapshotForSession: vi.fn(),
+    },
+    result,
+    staleRefsWarning: undefined,
+    extra: {},
+  });
+  if (retired) {
+    expect(payloads.responseData.settle).toBeUndefined();
+    expect(payloads.result.settle).toBeUndefined();
+    expect(sessionStore.lookup(address)).toEqual(successor);
+    expect(successor?.session.snapshot).toBeUndefined();
+  } else {
+    expect(payloads.responseData.settle).toMatchObject({ refsGeneration: 3, settled: true });
+  }
+});
+
 test.each([false, true])(
   'point-touch publication after a held frame probe, retired=%s',
   async (retired) => {
@@ -157,7 +210,6 @@ test.each([false, true])(
           return sessionStore.requireCurrent(ref).snapshot!;
         },
       },
-      session,
       result,
       staleRefsWarning: undefined,
       extra: {},

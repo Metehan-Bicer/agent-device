@@ -134,7 +134,6 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
   const readTargetTree = createFindTargetCapture({
     ref: sessionRef,
     device,
-    session,
     req,
     logPath,
     locator,

@@ -54,7 +54,6 @@ test('selector capture cache is keyed by scoped presentation options', async () 
   const runtime = createSelectorCaptureRuntime({
     ref: sessionStore.lookup(sessionName),
     device: session.device,
-    session,
     sessionStore,
     sessionName,
     capture: boundCapture,
@@ -228,7 +227,6 @@ function proofRuntime(params: {
   const runtime = createSelectorCaptureRuntime({
     ref: sessionStore.lookup(params.sessionName),
     device: session.device,
-    session,
     sessionStore,
     sessionName: params.sessionName,
     consumedSnapshot,
@@ -322,7 +320,6 @@ function makeCaptureRuntime(sessionName: string) {
   const runtime = createSelectorCaptureRuntime({
     ref: sessionStore.lookup(sessionName),
     device: session.device,
-    session,
     sessionStore,
     sessionName,
     capture: boundCapture,
@@ -356,7 +353,6 @@ test('a held selector capture updates the matching rebuilt record without restor
   const runtime = createSelectorCaptureRuntime({
     ref,
     device: ref.session.device,
-    session: ref.session,
     sessionStore,
     sessionName: address,
     capture: boundCapture,
