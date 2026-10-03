@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, test, vi } from 'vitest';
 import { readCurrentOwnerIdentity, isProcessAlive } from '@agent-device/host-kit/process';
 import {
@@ -15,9 +16,18 @@ import { resolveDaemonPaths, type DaemonPaths } from '../daemon-resolution.ts';
 import { readRegisteredDaemonOwnership } from '../daemon-registration.ts';
 import { readDaemonShutdownReport } from '../daemon-shutdown-report.ts';
 import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
-import { registeredDaemonFixtureArgs } from './test-utils/registered-daemon-fixture.ts';
+import {
+  registeredDaemonFixtureArgs,
+  spawnRegisteredDaemonFixture,
+  finishRegisteredDaemonFixture,
+} from './test-utils/registered-daemon-fixture.ts';
+import { spawnLegacyDaemonFixture } from './test-utils/legacy-daemon-fixture.ts';
+import { ensureDaemon, resolveClientSettings } from '../daemon-client/daemon-client-lifecycle.ts';
+import { inspectProcessLock } from '@agent-device/host-kit/file';
+import { AppError } from '@agent-device/kernel/errors';
 import { sleep } from '@agent-device/host-kit/retry';
 import { stopDaemonProcess } from '../daemon-process.ts';
+import { stopDaemon } from '../daemon/daemon-stop.ts';
 
 const fields = {
   socketPort: 4210,
@@ -464,4 +474,151 @@ async function finishPrivateTestDaemons(
     await launch.exited;
   }
   fs.rmSync(paths.baseDir, { recursive: true, force: true });
+}
+
+async function waitForCutoverFixture(ready: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (ready()) return;
+    await sleep(10);
+  }
+  assert.fail('cutover fixture did not reach its barrier');
+}
+
+function legacyDisposition(paths: DaemonPaths): boolean {
+  return (
+    JSON.parse(fs.readFileSync(path.join(paths.baseDir, 'legacy-disposition.json'), 'utf8')) as {
+      acquired: boolean;
+    }
+  ).acquired;
+}
+
+test('cutover refuses an already-running legacy daemon before signaling or changing registration', async () => {
+  const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-old-daemon-'));
+  const legacy = spawnLegacyDaemonFixture(paths);
+  try {
+    await waitForCutoverFixture(() => fs.existsSync(paths.infoPath));
+    const metadata = fs.readFileSync(paths.infoPath, 'utf8');
+    const lock = fs.readFileSync(paths.lockPath, 'utf8');
+    const contender = spawnRegisteredDaemonFixture(paths, fields, undefined);
+    let disposition: Awaited<typeof contender.exited> | undefined;
+    void contender.exited.then((result) => {
+      disposition = result;
+    });
+    await waitForCutoverFixture(
+      () => Boolean(disposition) || fs.existsSync(path.join(paths.baseDir, 'registration-held')),
+    );
+    assert.ok(disposition, 'a new daemon must refuse an occupied legacy file');
+    assert.equal(disposition.exitCode, DAEMON_STARTUP_EXIT_CODES.unproven);
+    await assert.rejects(
+      ensureDaemon(
+        resolveClientSettings({
+          session: 'default',
+          command: 'devices',
+          positionals: [],
+          flags: { stateDir: paths.baseDir },
+        }),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AppError);
+        assert.equal(error.details?.reason, 'daemon_registration_unproven');
+        return true;
+      },
+    );
+    assert.equal(process.kill(legacy.pid, 0), true);
+    assert.equal(fs.readFileSync(paths.infoPath, 'utf8'), metadata);
+    assert.equal(fs.readFileSync(paths.lockPath, 'utf8'), lock);
+  } finally {
+    await legacy.stop();
+    await finishRegisteredDaemonFixture(paths.baseDir);
+  }
+});
+
+test('a legacy contender cannot unlink a hardened owner while it delays metadata publication', async () => {
+  const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-new-daemon-'));
+  const deferred = path.join(paths.baseDir, 'defer-publication');
+  fs.writeFileSync(deferred, 'wait');
+  const current = spawnRegisteredDaemonFixture(paths, fields, undefined);
+  let legacy: ReturnType<typeof spawnLegacyDaemonFixture> | undefined;
+  try {
+    await waitForCutoverFixture(() => fs.existsSync(path.join(paths.baseDir, 'registration-held')));
+    legacy = spawnLegacyDaemonFixture(paths);
+    await legacy.exited;
+    assert.equal(legacyDisposition(paths), false);
+    const claim = inspectProcessLock(paths.lockPath);
+    assert.equal(claim.state, 'held');
+    if (claim.state !== 'held') throw new Error('current owner lost its claim');
+    assert.equal(claim.owner.pid, current.pid);
+    assert.equal(process.kill(current.pid, 0), true);
+    assert.equal(fs.existsSync(paths.infoPath), false);
+    fs.unlinkSync(deferred);
+    await waitForCutoverFixture(() => fs.existsSync(paths.infoPath));
+    assert.equal(JSON.parse(fs.readFileSync(paths.infoPath, 'utf8')).pid, current.pid);
+  } finally {
+    await legacy?.stop();
+    await finishRegisteredDaemonFixture(paths.baseDir);
+  }
+});
+
+test('concurrent old and new daemon startup has one owner at the shared lock path', async () => {
+  const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-cutover-race-'));
+  const barrier = path.join(paths.baseDir, 'start');
+  const legacy = spawnLegacyDaemonFixture(paths, barrier);
+  const current = spawnRegisteredDaemonFixture(paths, fields, undefined, barrier);
+  let currentExited = false;
+  void current.exited.then(() => {
+    currentExited = true;
+  });
+  try {
+    await waitForCutoverFixture(
+      () =>
+        fs.existsSync(`${barrier}.ready-${legacy.pid}`) &&
+        fs.existsSync(`${barrier}.ready-${current.pid}`),
+    );
+    fs.writeFileSync(barrier, 'start');
+    await waitForCutoverFixture(
+      () =>
+        fs.existsSync(path.join(paths.baseDir, 'legacy-disposition.json')) &&
+        (currentExited || fs.existsSync(path.join(paths.baseDir, 'registration-held'))),
+    );
+    const oldAcquired = legacyDisposition(paths);
+    const claim = inspectProcessLock(paths.lockPath);
+    const newAcquired = fs.existsSync(path.join(paths.baseDir, 'registration-held'));
+    assert.equal(Number(oldAcquired) + Number(newAcquired), 1);
+    if (newAcquired) {
+      assert.ok(claim.state === 'held');
+      assert.equal(claim.owner.pid, current.pid);
+    }
+    if (oldAcquired)
+      assert.equal((await current.exited).exitCode, DAEMON_STARTUP_EXIT_CODES.unproven);
+    else await legacy.exited;
+    await waitForCutoverFixture(() => fs.existsSync(paths.infoPath));
+    assert.equal(
+      JSON.parse(fs.readFileSync(paths.infoPath, 'utf8')).pid,
+      newAcquired ? current.pid : legacy.pid,
+    );
+  } finally {
+    await legacy.stop();
+    await finishRegisteredDaemonFixture(paths.baseDir);
+  }
+});
+
+for (const mode of ['graceful', 'forced'] as const) {
+  test(`manual ${mode} stop awaits actual child exit and protected registration retirement`, async () => {
+    const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-manual-stop-'));
+    if (mode === 'forced') fs.writeFileSync(path.join(paths.baseDir, 'ignore-sigterm'), 'hold');
+    const child = spawnRegisteredDaemonFixture(paths, fields, undefined);
+    try {
+      await waitForFixtureFile(paths.infoPath);
+      const result = await stopDaemon({ paths, graceTimeoutMs: 30, killTimeoutMs: 1_000 });
+      assert.equal(result.stopped, true);
+      assert.equal(result.mode, mode);
+      assert.equal(result.cleanupConfidence, mode === 'forced' ? 'unknown' : 'known');
+      await child.exited;
+      assert.equal(fs.existsSync(paths.infoPath), false);
+      assert.equal(fs.existsSync(paths.lockPath), false);
+      assert.equal(fs.existsSync(paths.baseDir), true);
+    } finally {
+      await finishRegisteredDaemonFixture(paths.baseDir);
+    }
+  });
 }

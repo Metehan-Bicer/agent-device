@@ -20,6 +20,7 @@ const children = new Map<
 export function registeredDaemonFixtureArgs(
   paths: DaemonPaths,
   fields: DaemonRegistrationFields,
+  acquisitionBarrier?: string,
 ): string[] {
   const entry = path.join(paths.baseDir, 'dist', 'src', 'internal', 'daemon.js');
   fs.mkdirSync(path.dirname(entry), { recursive: true });
@@ -31,9 +32,15 @@ export function registeredDaemonFixtureArgs(
 import path from 'node:path';
 import { DAEMON_STARTUP_EXIT_CODES, tryAcquireDaemonRegistration } from ${JSON.stringify(registrationUrl)};
 const paths = ${JSON.stringify(paths)};
+const barrier = ${JSON.stringify(acquisitionBarrier)};
+if (barrier) {
+  fs.writeFileSync(barrier + '.ready-' + process.pid, 'ready');
+  while (!fs.existsSync(barrier)) await new Promise(resolve => setTimeout(resolve, 10));
+}
 const acquired = await tryAcquireDaemonRegistration(paths);
 if (acquired.status !== 'acquired') process.exit(DAEMON_STARTUP_EXIT_CODES[acquired.status]);
 process.on('SIGTERM', async () => {
+  if (fs.existsSync(path.join(paths.baseDir, 'ignore-sigterm'))) return;
   const deferred = path.join(paths.baseDir, 'repair-on-shutdown.json');
   if (fs.existsSync(deferred)) {
     const dir = path.join(paths.sessionsDir, 'default');
@@ -56,10 +63,11 @@ export function spawnRegisteredDaemonFixture(
   paths: DaemonPaths,
   fields: DaemonRegistrationFields,
   options: Parameters<typeof runCmdDetachedMonitored>[2],
+  acquisitionBarrier?: string,
 ): ReturnType<typeof runCmdDetachedMonitored> {
   const child = actualCommand.runCmdDetachedMonitored(
     process.execPath,
-    registeredDaemonFixtureArgs(paths, fields),
+    registeredDaemonFixtureArgs(paths, fields, acquisitionBarrier),
     options,
   );
   const owned = children.get(paths.baseDir) ?? [];
