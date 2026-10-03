@@ -418,12 +418,13 @@ async function teardownExpiredSession(params: {
   platformCleanup: PlatformResourceCleanup;
 }): Promise<void> {
   const { session, sessionName, sessionStore, inspectFacts, bindDevice, platformCleanup } = params;
+  const ref = sessionStore.lookup(sessionName);
+  if (!ref) return;
   let primaryError: unknown;
   try {
     await teardownSessionResources({
       appLog: 'run',
-      session,
-      sessionName,
+      ref,
       sessionStore,
       platformCleanup,
     });

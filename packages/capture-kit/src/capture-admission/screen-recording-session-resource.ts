@@ -17,27 +17,20 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import type {
   DurableCaptureRecoveryControl,
   DurableCaptureSessionBinding,
-  DurableCaptureSessionStore,
 } from '../durable-capture/index.ts';
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
 import type { DurableCaptureFinishIntent } from './durable-capture-resource.ts';
 import type { ScreenRecordingAdmissionLedger } from './screen-recording-admission-ledger.ts';
 import { screenRecordingResourceStore } from './screen-recording-resource-store.ts';
-import type { DurableCaptureSessionState } from './session-state-slice.ts';
 
 export const screenRecordingDurableResource = createDurableCaptureResource<
   'screen-recording',
   ScreenRecordingLiveHandle,
-  ScreenRecordingCompletion,
-  DurableCaptureSessionState
+  ScreenRecordingCompletion
 >({
   resourceKind: 'screen-recording',
   displayName: 'screen recording',
   store: screenRecordingResourceStore,
-  sessionSlot: {
-    read: (session) => session.screenRecording,
-    replace: (session, screenRecording) => ({ ...session, screenRecording }),
-  },
   completionMetadata: encodeScreenRecordingCompletionMetadata,
   // ADR 0024 rule 6: the next stop re-collects the native artifact a failed export left behind, and
   // forced cleanup would delete exactly that. Disposal belongs to teardown and start rollback.
@@ -63,9 +56,7 @@ export function adoptStartedScreenRecording(params: {
 }
 
 export function finishLiveScreenRecording(params: {
-  session: DurableCaptureSessionState;
-  sessionName: string;
-  sessionStore: DurableCaptureSessionStore<DurableCaptureSessionState>;
+  binding: DurableCaptureSessionBinding<'screen-recording', ScreenRecordingLiveHandle>;
   intent: DurableCaptureFinishIntent;
 }): Promise<ScreenRecordingCompletion> {
   return screenRecordingDurableResource.finishLive(params);

@@ -1,5 +1,5 @@
 import { AppError } from '@agent-device/kernel/errors';
-import type { DurableCaptureSessionBinding, DurableCaptureSessionSlot } from './definition.ts';
+import type { DurableCaptureSessionBinding, DurableCaptureSessionResource } from './definition.ts';
 
 export function makeCaptureSessionBinding<K extends string, H extends AsyncDisposable, S>(
   store: Readonly<{
@@ -8,7 +8,10 @@ export function makeCaptureSessionBinding<K extends string, H extends AsyncDispo
     resolveSessionDir(name: string): string;
   }>,
   address: string,
-  slot: DurableCaptureSessionSlot<K, H, S>,
+  slot: Readonly<{
+    read(session: S): DurableCaptureSessionResource<K, H> | undefined;
+    replace(session: S, resource: DurableCaptureSessionResource<K, H> | undefined): S;
+  }>,
 ): DurableCaptureSessionBinding<K, H> {
   const requireSession = (): S => {
     const session = store.get(address);

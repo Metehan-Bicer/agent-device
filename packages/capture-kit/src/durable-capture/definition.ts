@@ -1,6 +1,5 @@
 import type { JsonObject } from '@agent-device/contracts/client';
 import type { DurableResourceEnvelope } from '@agent-device/contracts/durable-resource-envelope';
-import type { LiveResourceHandle } from '@agent-device/contracts/durable-resource';
 import type { PendingTransferGuard } from '@agent-device/contracts/async-lifecycle';
 import type {
   ResourceOwnershipFence,
@@ -22,16 +21,6 @@ export type DurableCaptureSessionBinding<K extends string, H extends AsyncDispos
   canPersist(): boolean;
   adopt(resource: DurableCaptureSessionResource<K, H>): void;
   clear(expected: DurableCaptureSessionResource<K, H>): 'cleared' | 'retired' | 'resource-changed';
-}>;
-
-export type DurableCaptureSessionStore<S> = Readonly<{
-  set(name: string, session: S): void;
-  resolveSessionDir(name: string): string;
-}>;
-
-export type DurableCaptureSessionSlot<K extends string, H extends AsyncDisposable, S> = Readonly<{
-  read(session: S): DurableCaptureSessionResource<K, H> | undefined;
-  replace(session: S, resource: DurableCaptureSessionResource<K, H> | undefined): S;
 }>;
 
 /**
@@ -74,14 +63,6 @@ export type DurableCaptureRecordDefinition<K extends string, C> = Readonly<{
     cleanupPendingHint: string;
   }>;
 }>;
-
-export type DurableCaptureResourceDefinition<
-  K extends string,
-  H extends LiveResourceHandle<C>,
-  C,
-  S,
-> = DurableCaptureRecordDefinition<K, C> &
-  Readonly<{ sessionSlot: DurableCaptureSessionSlot<K, H, S> }>;
 
 /**
  * What the mechanics observed about a failed adoption's cleanup. Reporting it keeps the

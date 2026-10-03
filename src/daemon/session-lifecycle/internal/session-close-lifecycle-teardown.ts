@@ -134,21 +134,11 @@ async function stopBestEffortSessionResources(
   attemptCleanup: CleanupRunner,
   platformCleanup: PlatformResourceCleanup,
 ): Promise<void> {
-  const { address: sessionName, session } = ref;
-  // Recording overlay finalization needs the Apple runner, so it runs first.
-  // `finishSessionScreenRecording` re-reads the stored session by address and
-  // returns when there is no recording; a second lookup here would only be a
-  // place to mis-address it.
-  await attemptCleanup('recording', () =>
-    finishSessionScreenRecording({ session, sessionName, sessionStore }),
-  );
-  await attemptCleanup('app_log', () => stopSessionAppLog({ session, sessionName, sessionStore }));
-  await attemptCleanup('audio_probe', () =>
-    finishSessionAudioProbe({ session, sessionName, sessionStore }),
-  );
-  await attemptCleanup('perf_capture', () =>
-    stopSessionPerfCapture({ session, sessionName, sessionStore }),
-  );
+  const session = sessionStore.resolveCurrent(ref) ?? ref.session;
+  await attemptCleanup('recording', () => finishSessionScreenRecording({ ref, sessionStore }));
+  await attemptCleanup('app_log', () => stopSessionAppLog({ ref, sessionStore }));
+  await attemptCleanup('audio_probe', () => finishSessionAudioProbe({ ref, sessionStore }));
+  await attemptCleanup('perf_capture', () => stopSessionPerfCapture({ ref, sessionStore }));
   await attemptCleanup('platform_snapshot_helper', () =>
     stopSessionSnapshotHelper(session, platformCleanup),
   );

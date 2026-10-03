@@ -296,7 +296,6 @@ test('app-log disposes on a failed finish because its retry is that same finish 
     finishSessionAppLog({
       intent: 'capture',
       ...context,
-      session: context.sessionStore.get(context.sessionName) ?? context.session,
     }),
   ).rejects.toBe(finishError);
 
@@ -385,6 +384,69 @@ test('late adoption disposes its pending handle without overwriting a successor 
     envelope,
   });
 });
+
+test.each(['rebuild', 'retire', 'replace-resource'] as const)(
+  'finishing app log after %s preserves the current record and its other fields',
+  async (change) => {
+    const context = makeContext();
+    const {
+      result: { envelope },
+    } = makeStartResult(context);
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const finish = vi.fn(async () => {
+      enter();
+      await release;
+      return {
+        status: 'completed' as const,
+        result: { backend: 'android' as const, outputPath: '/tmp/app.log', completedAt: 2 },
+      };
+    });
+    const handle = createTestAppLogLiveHandle({
+      inspect: () => ({ backend: 'android', state: 'active', startedAt: 1 }),
+      finish,
+      forceCleanup: async () => ({ status: 'cleaned' }),
+    });
+    await adoptStartedSessionAppLog({
+      ...context,
+      envelope,
+      pendingHandle: new PendingTransferGuard(handle),
+      throwIfCanceled: () => {},
+    });
+    const finishing = finishSessionAppLog({ ...context, intent: 'capture' });
+    await entered;
+    let currentRef = context.ref;
+    const active = context.sessionStore.requireCurrent(currentRef).appLog!;
+    const replacementHandle = makeStartResult(context).handle;
+    if (change === 'retire') {
+      context.sessionStore.retire(currentRef);
+      currentRef = context.sessionStore.publish(context.sessionName, {
+        ...context.session,
+        appLog: active,
+        appName: 'successor',
+      });
+    } else {
+      context.sessionStore.update(currentRef, {
+        appName: 'updated',
+        appLog:
+          change === 'replace-resource' ? { ...active, handle: replacementHandle } : { ...active },
+      });
+    }
+    resume();
+    await finishing;
+    expect(finish).toHaveBeenCalledOnce();
+    const current = context.sessionStore.requireCurrent(currentRef);
+    expect(current.appName).toBe(change === 'retire' ? 'successor' : 'updated');
+    if (change === 'rebuild') expect(current.appLog).toBeUndefined();
+    else expect(current.appLog?.handle).toBe(change === 'retire' ? handle : replacementHandle);
+  },
+);
 
 function makeContext(
   device: DeviceInfo = {

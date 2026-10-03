@@ -127,9 +127,7 @@ test('a perf stop whose pull failed re-collects the device-side trace the first 
   const stop = () =>
     finishLivePerfCapture({
       intent: 'capture',
-      session: sessionStore.get(sessionName) ?? session,
-      sessionName,
-      sessionStore,
+      binding: bindSessionPerfCapture(sessionStore, sessionStore.lookup(sessionName)!),
     });
 
   await expect(stop()).rejects.toBe(pullFailure);

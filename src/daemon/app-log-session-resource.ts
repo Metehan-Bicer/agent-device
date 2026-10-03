@@ -31,16 +31,11 @@ export type AppLogSessionSnapshot = Readonly<{
 export const appLogDurableResource = createDurableCaptureResource<
   'app-log',
   AppLogLiveHandle,
-  AppLogCompletion,
-  SessionState
+  AppLogCompletion
 >({
   resourceKind: 'app-log',
   displayName: 'app-log',
   store: appLogResourceStore,
-  sessionSlot: {
-    read: (session) => session.appLog,
-    replace: (session, appLog) => ({ ...session, appLog, appLogFailure: undefined }),
-  },
   completionMetadata: (completion) => ({
     backend: completion.backend,
     outputPath: completion.outputPath,
@@ -93,22 +88,23 @@ export function adoptStartedSessionAppLog(params: {
 }
 
 export function finishSessionAppLog(params: {
-  session: SessionState;
-  sessionName: string;
+  ref: SessionRef;
   sessionStore: SessionStore;
-  resourcePath: string;
   intent: DurableCaptureFinishIntent;
 }): Promise<AppLogCompletion> {
-  return appLogDurableResource.finishLive(params);
+  return appLogDurableResource.finishLive({
+    binding: bindSessionAppLog(params.sessionStore, params.ref),
+    intent: params.intent,
+  });
 }
 
 export function forceCleanupSessionAppLog(params: {
-  session: SessionState;
-  sessionName?: string;
-  sessionStore?: SessionStore;
-  resourcePath: string;
+  ref: SessionRef;
+  sessionStore: SessionStore;
 }): Promise<void> {
-  return appLogDurableResource.forceCleanupLive(params);
+  return appLogDurableResource.forceCleanupLive({
+    binding: bindSessionAppLog(params.sessionStore, params.ref),
+  });
 }
 
 export function recordSessionAppLogFailure(params: {

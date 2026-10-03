@@ -15,7 +15,6 @@ import {
 import type {
   AdoptStartedDurableCaptureParams,
   DurableCaptureRecordDefinition,
-  DurableCaptureResourceDefinition,
 } from './definition.ts';
 import { capitalizeDurableCaptureLabel, durableCaptureDiagnosticPrefix } from './labels.ts';
 
@@ -28,9 +27,8 @@ export async function adoptStartedDurableCapture<
   K extends string,
   H extends LiveResourceHandle<C>,
   C,
-  S,
 >(
-  definition: DurableCaptureResourceDefinition<K, H, C, S>,
+  definition: DurableCaptureRecordDefinition<K, C>,
   params: AdoptStartedDurableCaptureParams<K, H>,
   resourcePath: string,
 ): Promise<void> {

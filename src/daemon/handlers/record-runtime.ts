@@ -102,7 +102,13 @@ async function handleRecordCommandUnsafe(
       resolvedSession.needsReadiness,
     );
   }
-  return await stopRecording(params, session, plan.kind, resolvedSession.needsReadiness);
+  return await stopRecording(
+    params,
+    session,
+    resolvedSession.ref,
+    plan.kind,
+    resolvedSession.needsReadiness,
+  );
 }
 
 function resolveRecordPlan(req: DaemonRequest, session: SessionState | undefined) {
@@ -230,6 +236,7 @@ function recordingAppIdentity(
 async function stopRecording(
   params: RecordRuntimeHandlerParams,
   session: SessionState,
+  ref: SessionRef | undefined,
   kind: 'stop-live' | 'stop-recovery',
   needsReadiness: boolean,
 ): Promise<DaemonResponse> {
@@ -240,15 +247,13 @@ async function stopRecording(
         ? {
             completion: await finishLiveScreenRecording({
               intent: 'capture',
-              session,
-              sessionName: params.sessionName,
-              sessionStore: params.sessionStore,
+              binding: bindSessionScreenRecording(params.sessionStore, ref!),
             }),
             recordsSessionAction: true,
           }
         : await finishRecovered(params, session, needsReadiness);
   } catch (error) {
-    deleteTerminalRecordOnlySession(params, session);
+    deleteTerminalRecordOnlySession(params, session, ref);
     throw error;
   }
   const completion = stopped.completion;
@@ -263,16 +268,17 @@ async function stopRecording(
       showTouches: completion.showTouches,
     });
   }
-  if (session.recordOnlySession) params.sessionStore.delete(params.sessionName);
+  if (session.recordOnlySession && ref) params.sessionStore.retire(ref);
   return response;
 }
 
 function deleteTerminalRecordOnlySession(
   params: Pick<RecordRuntimeHandlerParams, 'sessionName' | 'sessionStore'>,
   session: SessionState,
+  ref: SessionRef | undefined,
 ): void {
-  if (!session.recordOnlySession) return;
-  if (screenRecordingManifestIsTerminal(params)) params.sessionStore.delete(params.sessionName);
+  if (!session.recordOnlySession || !ref) return;
+  if (screenRecordingManifestIsTerminal(params)) params.sessionStore.retire(ref);
 }
 
 async function finishRecovered(

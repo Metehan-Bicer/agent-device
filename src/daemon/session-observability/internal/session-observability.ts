@@ -323,10 +323,8 @@ async function handleLogsClearRestart(
     // an open record left here would refuse the start this path exists to serve.
     await finishSessionAppLog({
       intent: 'disposal',
-      session,
-      sessionName,
+      ref: params.ref,
       sessionStore,
-      resourcePath: appLogResourceStore.resolvePath(sessionStore.resolveSessionDir(sessionName)),
     });
   }
   const logPath = sessionStore.resolveAppLogPath(sessionName);
@@ -356,10 +354,8 @@ async function handleLogsStop(params: LogsHandlerParams): Promise<DaemonResponse
   const outPath = sessionStore.resolveAppLogPath(sessionName);
   await finishSessionAppLog({
     intent: 'capture',
-    session,
-    sessionName,
+    ref: params.ref,
     sessionStore,
-    resourcePath: appLogResourceStore.resolvePath(sessionStore.resolveSessionDir(sessionName)),
   });
   return { ok: true, data: { path: outPath, stopped: true } };
 }

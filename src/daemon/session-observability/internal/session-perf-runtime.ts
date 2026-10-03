@@ -76,7 +76,7 @@ export async function handlePerfRuntimeCommand(
     if (plan.kind === 'capture-stop') {
       return recordSuccessfulPerfResponse(
         params,
-        await stopPerfCapture(params, session, plan.request),
+        await stopPerfCapture(bound, session, plan.request),
       );
     }
     const admitted = await admitRuntimePlan({
@@ -249,7 +249,7 @@ function requirePerfCaptureAdmissionLedger(
 }
 
 async function stopPerfCapture(
-  params: PerfRuntimeHandlerParams,
+  params: PerfRuntimeHandlerParams & { ref: SessionRef },
   session: SessionState,
   request: Extract<PerfRuntimeRequest, { area: 'cpu' | 'trace' }>,
 ): Promise<DaemonResponse> {
@@ -263,14 +263,11 @@ async function stopPerfCapture(
   }
   const completion = await finishLivePerfCapture({
     intent: 'capture',
-    session,
-    sessionName: params.sessionName,
-    sessionStore: params.sessionStore,
+    binding: bindSessionPerfCapture(params.sessionStore, params.ref),
   });
   if (request.area === 'cpu') {
     const profile = readProfileHandoff(completion);
-    const refreshed = params.sessionStore.get(params.sessionName) ?? session;
-    params.sessionStore.set(params.sessionName, { ...refreshed, lastPerfProfile: profile });
+    params.sessionStore.update(params.ref, { lastPerfProfile: profile });
   }
   return { ok: true, data: completion };
 }

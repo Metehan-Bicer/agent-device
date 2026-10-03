@@ -31,19 +31,10 @@ export const testCaptureStore = createDurableCaptureResourceStore({
 export function createTestCaptureResource(
   store: DurableCaptureResourceStore<'app-log'> = testCaptureStore,
 ) {
-  return createDurableCaptureResource<
-    'app-log',
-    AppLogLiveHandle,
-    AppLogCompletion,
-    TestCaptureSession
-  >({
+  return createDurableCaptureResource<'app-log', AppLogLiveHandle, AppLogCompletion>({
     resourceKind: 'app-log',
     displayName: 'test capture',
     store,
-    sessionSlot: {
-      read: (session) => session.appLog,
-      replace: (session, appLog) => ({ ...session, appLog, appLogFailure: undefined }),
-    },
     completionMetadata: (completion) => ({
       outputPath: completion.outputPath,
       completedAt: completion.completedAt,

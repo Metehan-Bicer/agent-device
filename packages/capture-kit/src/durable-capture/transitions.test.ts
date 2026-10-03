@@ -39,9 +39,7 @@ test('finish failure remains primary when cleanup and cleanup-pending persistenc
       finishLiveDurableCapture(
         definition,
         {
-          session: active,
-          sessionName: context.sessionName,
-          sessionStore: context.sessionStore,
+          binding: context.binding,
           intent: 'capture',
         },
         context.resourcePath,
@@ -70,9 +68,7 @@ test('an uncertain finish preserves its error after confirmed compensating clean
     finishLiveDurableCapture(
       testCaptureDefinition,
       {
-        session: active,
-        sessionName: context.sessionName,
-        sessionStore: context.sessionStore,
+        binding: context.binding,
         intent: 'capture',
       },
       context.resourcePath,
@@ -106,9 +102,7 @@ test('an uncertain finish retains live evidence when compensating cleanup is unc
       finishLiveDurableCapture(
         testCaptureDefinition,
         {
-          session: active,
-          sessionName: context.sessionName,
-          sessionStore: context.sessionStore,
+          binding: context.binding,
           intent: 'capture',
         },
         context.resourcePath,
@@ -145,9 +139,7 @@ test('a preserved finish leaves the record open without disposing what its retry
       finishLiveDurableCapture(
         definition,
         {
-          session: active,
-          sessionName: context.sessionName,
-          sessionStore: context.sessionStore,
+          binding: context.binding,
           intent: 'capture',
         },
         context.resourcePath,
@@ -181,9 +173,7 @@ test('a preserved finish that reports uncertainty still leaves the record retrya
     finishLiveDurableCapture(
       definition,
       {
-        session: active,
-        sessionName: context.sessionName,
-        sessionStore: context.sessionStore,
+        binding: context.binding,
         intent: 'capture',
       },
       context.resourcePath,
@@ -216,9 +206,7 @@ test('a disposal finish disposes a preserving kind’s material too', async () =
     finishLiveDurableCapture(
       definition,
       {
-        session: active,
-        sessionName: context.sessionName,
-        sessionStore: context.sessionStore,
+        binding: context.binding,
         intent: 'disposal',
       },
       context.resourcePath,

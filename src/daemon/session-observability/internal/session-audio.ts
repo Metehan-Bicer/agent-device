@@ -20,7 +20,7 @@ import type {
 } from '../../request-runtime-binding.ts';
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionRef, SessionState } from '../../session-state.ts';
+import type { SessionRef } from '../../session-state.ts';
 import { bindSessionAudioProbe } from '../../audio-probe-session-binding.ts';
 import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
@@ -71,9 +71,9 @@ async function handleAudioCommandUnsafe(params: AudioParams): Promise<DaemonResp
     case 'capture-start':
       return await startAudioProbe(params, ref, request, plan.use);
     case 'capture-status':
-      return await audioProbeStatus(params, session);
+      return await audioProbeStatus(params, ref);
     case 'capture-stop':
-      return await stopAudioProbe(params, session);
+      return await stopAudioProbe(params, ref);
   }
 }
 
@@ -113,9 +113,7 @@ async function startAudioProbe(
   if (session.audioProbe) {
     await finishLiveAudioProbe({
       intent: 'disposal',
-      session,
-      sessionName: ref.address,
-      sessionStore: params.sessionStore,
+      binding,
     });
     session = params.sessionStore.requireCurrent(ref);
   }
@@ -153,11 +151,9 @@ async function startAudioProbe(
   return { ok: true, data: await adopted.handle.status() };
 }
 
-async function audioProbeStatus(
-  params: AudioParams,
-  session: SessionState,
-): Promise<DaemonResponse> {
-  const probe = session.audioProbe;
+async function audioProbeStatus(params: AudioParams, ref: SessionRef): Promise<DaemonResponse> {
+  const binding = bindSessionAudioProbe(params.sessionStore, ref);
+  const probe = binding.read();
   if (!probe) return { ok: true, data: inactiveAudioProbeResult() };
   const data = await probe.handle.status();
   if (data.state === 'stopped') {
@@ -166,21 +162,18 @@ async function audioProbeStatus(
     // status, never for an export no later stop could produce from a dead sampler.
     await finishLiveAudioProbe({
       intent: 'disposal',
-      session,
-      sessionName: params.sessionName,
-      sessionStore: params.sessionStore,
+      binding,
     });
   }
   return { ok: true, data };
 }
 
-async function stopAudioProbe(params: AudioParams, session: SessionState): Promise<DaemonResponse> {
-  if (!session.audioProbe) return { ok: true, data: inactiveAudioProbeResult() };
+async function stopAudioProbe(params: AudioParams, ref: SessionRef): Promise<DaemonResponse> {
+  const binding = bindSessionAudioProbe(params.sessionStore, ref);
+  if (!binding.read()) return { ok: true, data: inactiveAudioProbeResult() };
   const completion = await finishLiveAudioProbe({
     intent: 'capture',
-    session,
-    sessionName: params.sessionName,
-    sessionStore: params.sessionStore,
+    binding,
   });
   return { ok: true, data: completion };
 }

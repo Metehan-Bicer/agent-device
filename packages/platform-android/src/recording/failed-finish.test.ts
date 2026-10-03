@@ -12,7 +12,7 @@ import {
   adoptStartedDurableCapture,
   createDurableCaptureResourceStore,
   finishLiveDurableCapture,
-  type DurableCaptureResourceDefinition,
+  type DurableCaptureRecordDefinition,
 } from '@agent-device/capture-kit/durable-capture';
 import { mkdtempForTestSync } from '../__tests__/test-utils/tmp-dir.ts';
 import { androidRecordingDevice, recordingHost, recordingInput } from './fixtures.ts';
@@ -113,7 +113,7 @@ type AndroidRecordingSession = Readonly<{
 
 /**
  * The daemon's recording record assembled around the real Android handle: the same definition the
- * daemon declares in `src/daemon/screen-recording-session-resource.ts`, including its policy,
+ * daemon declares in `packages/capture-kit/src/capture-admission/screen-recording-session-resource.ts`, including its policy,
  * driving the shared coordinator.
  */
 async function adoptAndroidRecording(params: {
@@ -127,26 +127,18 @@ async function adoptAndroidRecording(params: {
     fileName: 'screen-recording.resource.json',
     displayName: 'screen recording',
   });
-  const definition: DurableCaptureResourceDefinition<
-    'screen-recording',
-    ScreenRecordingLiveHandle,
-    ScreenRecordingCompletion,
-    AndroidRecordingSession
-  > = {
-    resourceKind: 'screen-recording',
-    displayName: 'screen recording',
-    store,
-    failedFinishPolicy: 'preserve-retry-material',
-    sessionSlot: {
-      read: (session) => session.recording,
-      replace: (session, recording) => ({ ...session, recording }),
-    },
-    completionMetadata: (completion) => ({ outPath: completion.outPath }),
-    messages: {
-      noActive: 'no active recording',
-      cleanupPendingHint: 'Keep screen-recording.resource.json and retry stop.',
-    },
-  };
+  const definition: DurableCaptureRecordDefinition<'screen-recording', ScreenRecordingCompletion> =
+    {
+      resourceKind: 'screen-recording',
+      displayName: 'screen recording',
+      store,
+      failedFinishPolicy: 'preserve-retry-material',
+      completionMetadata: (completion) => ({ outPath: completion.outPath }),
+      messages: {
+        noActive: 'no active recording',
+        cleanupPendingHint: 'Keep screen-recording.resource.json and retry stop.',
+      },
+    };
   const sessionsDir = mkdtempForTestSync('agent-device-android-failed-finish-session-');
   let session: AndroidRecordingSession = {};
   const sessionStore = {
@@ -193,9 +185,7 @@ async function adoptAndroidRecording(params: {
       finishLiveDurableCapture(
         definition,
         {
-          session,
-          sessionName: params.sessionName,
-          sessionStore,
+          binding,
           intent: 'capture',
         },
         resourcePath,

@@ -104,9 +104,7 @@ test('screen recording persists durable truth before adopting only handle and en
 
   const active = sessionStore.get(sessionName);
   if (!active) throw new Error('Expected screen-recording session');
-  await expect(
-    finishLiveScreenRecording({ intent: 'capture', session: active, sessionName, sessionStore }),
-  ).resolves.toMatchObject({
+  await expect(finishLiveScreenRecording({ intent: 'capture', binding })).resolves.toMatchObject({
     backend: 'android',
     outPath: '/tmp/recording.mp4',
   });
@@ -171,9 +169,7 @@ test('a failed recording finish keeps the record open and never disposes the rec
 
   const active = sessionStore.get(sessionName);
   if (!active) throw new Error('Expected screen-recording session');
-  await expect(
-    finishLiveScreenRecording({ intent: 'capture', session: active, sessionName, sessionStore }),
-  ).rejects.toBe(finishError);
+  await expect(finishLiveScreenRecording({ intent: 'capture', binding })).rejects.toBe(finishError);
 
   expect(forceCleanup).not.toHaveBeenCalled();
   expect(sessionStore.get(sessionName)?.screenRecording?.handle).toBe(handle);
@@ -249,9 +245,7 @@ test('a record stop that fails after collecting resumes through the fence withou
     if (!active) throw new Error('Expected screen-recording session');
     return finishLiveScreenRecording({
       intent: 'capture',
-      session: sessionStore.get(sessionName) ?? session,
-      sessionName,
-      sessionStore,
+      binding,
     });
   };
 

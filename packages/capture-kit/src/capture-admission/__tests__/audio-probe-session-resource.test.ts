@@ -104,9 +104,7 @@ test('audio-probe disposes on a failed finish because terminating the helper is 
   await expect(
     finishLiveAudioProbe({
       intent: 'capture',
-      session: sessionStore.get(sessionName) ?? session,
-      sessionName,
-      sessionStore,
+      binding,
     }),
   ).rejects.toThrow('helper exited before completing the capture');
 

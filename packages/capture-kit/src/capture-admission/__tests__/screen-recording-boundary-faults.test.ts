@@ -188,16 +188,11 @@ function createScreenRecordingTestResource(
   return createDurableCaptureResource<
     'screen-recording',
     ScreenRecordingLiveHandle,
-    ScreenRecordingCompletion,
-    DurableCaptureSessionState
+    ScreenRecordingCompletion
   >({
     resourceKind: 'screen-recording',
     displayName: 'screen recording',
     store,
-    sessionSlot: {
-      read: (session) => session.screenRecording,
-      replace: (session, screenRecording) => ({ ...session, screenRecording }),
-    },
     completionMetadata: (completion) => ({
       backend: completion.backend,
       outputPath: completion.outPath,
