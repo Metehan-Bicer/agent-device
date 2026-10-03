@@ -189,7 +189,7 @@ function isSessionBinding(name: string): boolean {
 
 /** A member expression being assigned to, or updated with `++`/`--`. */
 type WriteTarget = {
-  object: string | undefined;
+  object: unknown;
   field: string | undefined;
   computed: boolean;
   offset: number;
@@ -197,19 +197,18 @@ type WriteTarget = {
 
 function writeTarget(node: Record<string, unknown>): WriteTarget | null {
   const type = node['type'];
-  const member =
+  const candidate =
     type === 'AssignmentExpression'
       ? (node['left'] as Record<string, unknown> | undefined)
       : type === 'UpdateExpression'
         ? (node['argument'] as Record<string, unknown> | undefined)
         : undefined;
-  if (!member || member['type'] !== 'MemberExpression') return null;
+  const member = unwrapExpression(candidate);
+  if (member?.['type'] !== 'MemberExpression') return null;
   const object = member['object'] as Record<string, unknown> | undefined;
   const property = member['property'] as Record<string, unknown> | undefined;
   return {
-    // Only a direct `<identifier>.field` write is a session write; `a.b.c = …` writes into a
-    // sub-object and its `object` is a MemberExpression, so it has no identifier name here.
-    object: object?.['type'] === 'Identifier' ? (object['name'] as string) : undefined,
+    object,
     field: property?.['type'] === 'Identifier' ? (property['name'] as string) : undefined,
     computed: member['computed'] === true,
     offset: typeof member['start'] === 'number' ? member['start'] : 0,
@@ -241,6 +240,7 @@ function unwrapExpression(value: unknown): AstNode | undefined {
       'TSSatisfiesExpression',
       'TSNonNullExpression',
       'ParenthesizedExpression',
+      'ChainExpression',
     ].includes(String(node.type))
   ) {
     node = astNode(node.expression);
@@ -253,11 +253,20 @@ function isSessionStoreReceiver(value: unknown, storeBindings: ReadonlySet<strin
   return members !== undefined && storeBindings.has(members.at(-1)!);
 }
 
-function isSessionRecord(value: unknown, sessionBindings: ReadonlySet<string>): boolean {
+function isSessionRecord(
+  value: unknown,
+  sessionBindings: ReadonlySet<string>,
+  sessionRefBindings: ReadonlySet<string>,
+  sessionRefPaths: ReadonlySet<string>,
+  storeBindings: ReadonlySet<string>,
+): boolean {
   const node = unwrapExpression(value);
   return node?.type === 'Identifier'
     ? sessionBindings.has(String(node.name))
-    : node?.type === 'MemberExpression' && memberName(node) === 'session';
+    : node?.type === 'MemberExpression' &&
+        memberName(node) === 'session' &&
+        (node.computed !== true || astNode(node.property)?.type === 'Literal') &&
+        isSessionRefValue(node.object, sessionRefBindings, sessionRefPaths, storeBindings);
 }
 
 function isSessionRead(value: unknown, storeBindings: ReadonlySet<string>): boolean {
@@ -273,9 +282,107 @@ function isSessionRead(value: unknown, storeBindings: ReadonlySet<string>): bool
   );
 }
 
+function isSessionRecordOrRead(
+  value: unknown,
+  sessionBindings: ReadonlySet<string>,
+  sessionRefBindings: ReadonlySet<string>,
+  sessionRefPaths: ReadonlySet<string>,
+  storeBindings: ReadonlySet<string>,
+): boolean {
+  return (
+    isSessionRecord(value, sessionBindings, sessionRefBindings, sessionRefPaths, storeBindings) ||
+    isSessionRead(value, storeBindings)
+  );
+}
+
+function isSessionRefValue(
+  value: unknown,
+  sessionRefBindings: ReadonlySet<string>,
+  sessionRefPaths: ReadonlySet<string>,
+  storeBindings: ReadonlySet<string>,
+): boolean {
+  const node = unwrapExpression(value);
+  if (!node) return false;
+  if (node.type === 'LogicalExpression')
+    return (
+      isSessionRefValue(node.left, sessionRefBindings, sessionRefPaths, storeBindings) ||
+      isSessionRefValue(node.right, sessionRefBindings, sessionRefPaths, storeBindings)
+    );
+  if (node.type === 'Identifier' && sessionRefBindings.has(String(node.name))) return true;
+  if (node.type === 'MemberExpression') {
+    const path = memberPath(node);
+    if (path && sessionRefPaths.has(path.join('\0'))) return true;
+  }
+  const callee = astNode(node.callee);
+  return (
+    node.type === 'CallExpression' &&
+    callee?.type === 'MemberExpression' &&
+    ['lookup', 'publish', 'findByDevice', 'refresh'].includes(memberName(callee) ?? '') &&
+    isSessionStoreReceiver(callee.object, storeBindings)
+  );
+}
+
 function hasNamedType(node: AstNode, name: string): boolean {
   const annotation = astNode(astNode(node.typeAnnotation)?.typeAnnotation);
   return annotation?.type === 'TSTypeReference' && propertyName(annotation.typeName) === name;
+}
+
+function sessionRefPropertyPaths(node: AstNode): string[][] {
+  const paths: string[][] = [];
+  const collect = (type: AstNode | undefined, prefix: readonly string[]): void => {
+    if (type?.type !== 'TSTypeLiteral') return;
+    for (const member of type.members as AstNode[]) {
+      if (member.type !== 'TSPropertySignature') continue;
+      const field = propertyName(member.key);
+      if (!field) continue;
+      if (hasNamedType(member, 'SessionRef')) paths.push([...prefix, field]);
+      else collect(astNode(astNode(member.typeAnnotation)?.typeAnnotation), [...prefix, field]);
+    }
+  };
+  collect(astNode(astNode(node.typeAnnotation)?.typeAnnotation), []);
+  return paths;
+}
+
+function hasObjectRestPattern(pattern: AstNode): boolean {
+  const properties = pattern.properties as AstNode[] | undefined;
+  return properties?.some((property) => property.type === 'RestElement') === true;
+}
+
+function collectPatchReturns(value: unknown, returns: AstNode[]): void {
+  if (Array.isArray(value)) {
+    for (const child of value) collectPatchReturns(child, returns);
+    return;
+  }
+  const node = astNode(value);
+  if (!node) return;
+  if (node.type === 'ReturnStatement') {
+    returns.push(node);
+    return;
+  }
+  if (
+    ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
+      String(node.type),
+    )
+  )
+    return;
+  for (const child of Object.values(node)) collectPatchReturns(child, returns);
+}
+
+function bindSessionRefProperties(pattern: AstNode, sessionBindings: Set<string>): void {
+  for (const property of pattern.properties as AstNode[]) {
+    if (property.type !== 'Property') continue;
+    const key = astNode(property.key);
+    const field = propertyName(property.key);
+    if (
+      property.computed === true
+        ? key?.type === 'Literal' && field !== 'session'
+        : field !== 'session'
+    )
+      continue;
+    const value = astNode(property.value);
+    const binding = value?.type === 'AssignmentPattern' ? astNode(value.left) : value;
+    if (binding?.type === 'Identifier') sessionBindings.add(String(binding.name));
+  }
 }
 
 function patchObjects(value: unknown): AstNode[] | undefined {
@@ -291,9 +398,7 @@ function patchObjects(value: unknown): AstNode[] | undefined {
   if (body?.type === 'ObjectExpression') return [body];
   if (body?.type !== 'BlockStatement') return undefined;
   const returns: AstNode[] = [];
-  visitAst(body, (node) => {
-    if (node.type === 'ReturnStatement') returns.push(node);
-  });
+  collectPatchReturns(body, returns);
   if (returns.length !== 1 || !(body.body as AstNode[]).includes(returns[0]!)) return undefined;
   const result = unwrapExpression(returns[0]!.argument);
   return result?.type === 'ObjectExpression' ? [result] : undefined;
@@ -318,8 +423,12 @@ export function findSessionStateWrites(
     if (path.posix.basename(file) === 'session-store.ts') continue;
     const program = parseSync(file, source).program;
     const sessionBindings = new Set<string>();
+    const sessionRefBindings = new Set<string>();
+    const sessionRefPaths = new Set<string>();
     const storeBindings = new Set(['store', 'sessionStore']);
     const aliases: Array<readonly [string, unknown]> = [];
+    const objectDestructurings: Array<readonly [AstNode, unknown]> = [];
+    const recordRestPatterns = new Map<AstNode, unknown>();
     const patches = new Set<AstNode>();
     const report = (node: AstNode, field: string): void => {
       writes.push({ file, line: lineOf(source, Number(node.start ?? 0)), field });
@@ -328,20 +437,31 @@ export function findSessionStateWrites(
       if (node.type === 'Identifier') {
         if (isSessionBinding(String(node.name)) || hasNamedType(node, 'SessionState'))
           sessionBindings.add(String(node.name));
+        if (hasNamedType(node, 'SessionRef')) sessionRefBindings.add(String(node.name));
         if (hasNamedType(node, 'SessionStore')) storeBindings.add(String(node.name));
+        for (const path of sessionRefPropertyPaths(node))
+          sessionRefPaths.add([String(node.name), ...path].join('\0'));
       }
       if (node.type === 'VariableDeclarator') {
         const id = astNode(node.id);
-        if (id?.type === 'Identifier') aliases.push([String(id.name), node.init]);
+        if (id?.type === 'Identifier') {
+          aliases.push([String(id.name), node.init]);
+        }
+        if (id?.type === 'ObjectPattern') {
+          objectDestructurings.push([id, node.init]);
+          if (hasObjectRestPattern(id)) recordRestPatterns.set(id, node.init);
+        }
       }
       if (node.type === 'ObjectPattern') {
+        if (hasNamedType(node, 'SessionRef')) bindSessionRefProperties(node, sessionBindings);
+        if (hasObjectRestPattern(node) && hasNamedType(node, 'SessionState'))
+          recordRestPatterns.set(node, undefined);
         for (const property of node.properties as AstNode[]) {
           if (property.type !== 'Property') continue;
-          const field = propertyName(property.key);
+          const field = property.computed === true ? undefined : propertyName(property.key);
           const value = astNode(property.value);
           const binding = value?.type === 'AssignmentPattern' ? astNode(value.left) : value;
           if (binding?.type !== 'Identifier') continue;
-          if (field === 'session') sessionBindings.add(String(binding.name));
           if (field === 'store' || field === 'sessionStore')
             storeBindings.add(String(binding.name));
         }
@@ -358,10 +478,52 @@ export function findSessionStateWrites(
           }
           if (
             !sessionBindings.has(name) &&
-            (isSessionRecord(value, sessionBindings) || isSessionRead(value, storeBindings))
+            (isSessionRecord(
+              value,
+              sessionBindings,
+              sessionRefBindings,
+              sessionRefPaths,
+              storeBindings,
+            ) ||
+              isSessionRead(value, storeBindings))
           ) {
             sessionBindings.add(name);
             added = true;
+          }
+          if (
+            !sessionRefBindings.has(name) &&
+            isSessionRefValue(value, sessionRefBindings, sessionRefPaths, storeBindings)
+          ) {
+            sessionRefBindings.add(name);
+            added = true;
+          }
+        }
+        for (const [pattern, value] of objectDestructurings) {
+          if (isSessionRefValue(value, sessionRefBindings, sessionRefPaths, storeBindings)) {
+            const bindingCount = sessionBindings.size;
+            bindSessionRefProperties(pattern, sessionBindings);
+            if (sessionBindings.size !== bindingCount) added = true;
+          }
+          const sourcePath = memberPath(unwrapExpression(value));
+          if (!sourcePath) continue;
+          for (const property of pattern.properties as AstNode[]) {
+            if (
+              property.type !== 'Property' ||
+              (property.computed === true && astNode(property.key)?.type !== 'Literal')
+            )
+              continue;
+            const field = propertyName(property.key);
+            const value = astNode(property.value);
+            const binding = value?.type === 'AssignmentPattern' ? astNode(value.left) : value;
+            if (
+              field &&
+              binding?.type === 'Identifier' &&
+              !sessionRefBindings.has(String(binding.name)) &&
+              sessionRefPaths.has([...sourcePath, field].join('\0'))
+            ) {
+              sessionRefBindings.add(String(binding.name));
+              added = true;
+            }
           }
         }
       } while (added);
@@ -412,6 +574,25 @@ export function findSessionStateWrites(
       }
     });
     inheritAliases();
+    for (const [pattern, source] of recordRestPatterns) {
+      if (
+        hasNamedType(pattern, 'SessionState') ||
+        isSessionRecordOrRead(
+          source,
+          sessionBindings,
+          sessionRefBindings,
+          sessionRefPaths,
+          storeBindings,
+        )
+      ) {
+        report(pattern, '[whole-record-spread]');
+        for (const property of pattern.properties as AstNode[]) {
+          const binding = property.type === 'RestElement' ? astNode(property.argument) : undefined;
+          if (binding?.type === 'Identifier') sessionBindings.add(String(binding.name));
+        }
+      }
+    }
+    inheritAliases();
     const walk = (value: unknown, ancestors: readonly AstNode[]): void => {
       if (Array.isArray(value)) {
         for (const child of value) walk(child, ancestors);
@@ -420,16 +601,54 @@ export function findSessionStateWrites(
       const node = astNode(value);
       if (!node) return;
       const target = writeTarget(node);
-      if (target?.object !== undefined && sessionBindings.has(target.object)) {
+      if (
+        target &&
+        isSessionRecord(
+          target.object,
+          sessionBindings,
+          sessionRefBindings,
+          sessionRefPaths,
+          storeBindings,
+        )
+      ) {
         if (target.computed) report(node, '[computed]');
         else if (target.field !== undefined && declared.has(target.field))
           report(node, target.field);
+      }
+      if (node.type === 'CallExpression') {
+        const callee = unwrapExpression(node.callee);
+        const args = node.arguments as unknown[] | undefined;
+        const objectAssign =
+          callee?.type === 'MemberExpression' &&
+          memberName(callee) === 'assign' &&
+          astNode(callee.object)?.type === 'Identifier' &&
+          astNode(callee.object)?.name === 'Object';
+        const structuredClone = callee?.type === 'Identifier' && callee.name === 'structuredClone';
+        if (
+          (objectAssign || structuredClone) &&
+          args?.some((argument) =>
+            isSessionRecordOrRead(
+              argument,
+              sessionBindings,
+              sessionRefBindings,
+              sessionRefPaths,
+              storeBindings,
+            ),
+          )
+        )
+          report(node, '[whole-record-spread]');
       }
       if (node.type === 'ObjectExpression' && !patches.has(node)) {
         const properties = node.properties as AstNode[];
         const copiesRecord = properties.some((property) => {
           if (property.type !== 'SpreadElement') return false;
-          return isSessionRecord(property.argument, sessionBindings);
+          return isSessionRecordOrRead(
+            property.argument,
+            sessionBindings,
+            sessionRefBindings,
+            sessionRefPaths,
+            storeBindings,
+          );
         });
         if (copiesRecord) {
           const enclosingFunction = [...ancestors]

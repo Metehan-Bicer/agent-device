@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { parseSync } from 'oxc-parser';
 import {
   findSessionStateWrites,
   SESSION_STATE_FIELD_OWNERS,
@@ -9,6 +10,7 @@ import {
 const OWNER = 'src/daemon/app-log-session-resource.ts';
 const FIELDS = ['appLog', 'appLogFailure', 'lease', 'lastPerfProfile'];
 function scan(source: string, file = OWNER) {
+  assert.deepEqual(parseSync(file, source).errors, [], `fixture must parse as a module: ${file}`);
   return findSessionStateWrites(new Map([[file, source]]), FIELDS);
 }
 
@@ -80,9 +82,9 @@ test('the historical app-log whole-record spread is refused and counted fairly',
 
 test('record copies through a read alias or captured ref remain visible', () => {
   for (const source of [
-    'const refreshed = params.sessionStore.get(address) ?? session; return { ...refreshed, lastPerfProfile: profile };',
-    'const previous: SessionState = value; return { ...previous, lastPerfProfile: profile };',
-    'return { ...ref.session, lastPerfProfile: profile };',
+    'function copy(session: SessionState) { const refreshed = params.sessionStore.get(address) ?? session; return { ...refreshed, lastPerfProfile: profile }; }',
+    'function copy(value: SessionState) { const previous: SessionState = value; return { ...previous, lastPerfProfile: profile }; }',
+    'function copy(ref: SessionRef) { return { ...ref.session, lastPerfProfile: profile }; }',
   ])
     assert.deepEqual(
       scan(source).map((w) => w.field),
@@ -114,8 +116,8 @@ test('plain store and record aliases retain their owning identity', () => {
     ['appLogFailure'],
   );
   for (const source of [
-    'const current = ref.session; return { ...current };',
-    'const current = session; return { ...current };',
+    'function copy(ref: SessionRef) { const current = ref.session; return { ...current }; }',
+    'function copy(session: SessionState) { const current = session; return { ...current }; }',
   ]) {
     assert.deepEqual(
       scan(source).map((w) => w.field),
@@ -125,12 +127,121 @@ test('plain store and record aliases retain their owning identity', () => {
   }
 });
 
+test('direct field writes through a tracked SessionRef session are visible', () => {
+  for (const source of [
+    'function mutate(ref: SessionRef) { ref.session.appLogFailure = error; }',
+    'function mutate(store: SessionStore) { const ref = store.lookup(address); ref.session.appLogFailure = error; }',
+    'function mutate(ref: SessionRef) { ref["session"].appLogFailure = error; }',
+  ])
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['appLogFailure'],
+      source,
+    );
+  assert.deepEqual(
+    scan(
+      'function mutate(ref: SessionRef) { const { session: current } = ref; current.appLogFailure = error; }',
+    ).map((write) => write.field),
+    ['appLogFailure'],
+  );
+  assert.deepEqual(
+    scan(
+      'function mutate(ref: SessionRef) { const current = ref?.session; current.appLogFailure = error; }',
+    ).map((write) => write.field),
+    ['appLogFailure'],
+  );
+});
+
+test('unrelated session properties are not SessionState records', () => {
+  for (const source of [
+    'function copy(request: { session: string }) { return { ...request.session }; }',
+    'function mutate(request: { session: string }) { const { session: current } = request; current.appLogFailure = error; }',
+    'function copy(ref: SessionRef, session: string) { return { ...ref[session] }; }',
+  ])
+    assert.deepEqual(scan(source), [], source);
+});
+
+test('optional-chain record and store reads remain visible through aliases', () => {
+  for (const source of [
+    'function copy(ref: SessionRef) { const current = ref?.session; return { ...current }; }',
+    'function copy(ref: SessionRef) { return { ...ref?.session }; }',
+    'function copy(ref: SessionRef) { return { ...ref["session"] }; }',
+    'function copy(sessionStore: SessionStore, ref: SessionRef) { const current = sessionStore?.get(ref); return { ...current }; }',
+  ]) {
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['[whole-record-spread]'],
+      source,
+    );
+  }
+});
+
+test('direct clone APIs and full object-rest patterns cannot copy a session record', () => {
+  for (const source of [
+    'function copy(session: SessionState) { return Object.assign({}, session); }',
+    'function copy(session: SessionState) { return structuredClone(session); }',
+    'function copy(session: SessionState) { const { ...copy } = session; }',
+  ]) {
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['[whole-record-spread]'],
+      source,
+    );
+  }
+  assert.deepEqual(
+    scan(
+      'function copy(session: SessionState) { const { lease, ...rest } = session; rest.appLogFailure = error; }',
+    ).map((write) => write.field),
+    ['[whole-record-spread]', 'appLogFailure'],
+  );
+  assert.deepEqual(
+    scan(
+      'function copy(params: object, key: string) { const { [key]: current } = params; current.appLogFailure = error; }',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    scan(
+      'function copy(params: object, session: string) { const { [session]: current } = params; current.appLogFailure = error; }',
+    ),
+    [],
+  );
+});
+
+test('nested callback returns do not make a direct patch return ambiguous', () => {
+  for (const source of [
+    'store.update(ref, (current) => { const inspect = () => { if (current) return; }; return { lease: current.lease }; });',
+    'store.update(ref, (current) => { items.forEach((item) => { if (item) return; }); return { lease: { ...current.lease } }; });',
+  ]) {
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['lease'],
+      source,
+    );
+  }
+});
+
+test('rest copies retain identity from an inline patch callback current record', () => {
+  for (const record of ['current', 'previous']) {
+    const source = `store.update(ref, (current) => {
+      const previous = current;
+      const { lease, ...copy } = ${record};
+      return { appLogFailure: copy.appLogFailure };
+    });`;
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['[whole-record-spread]', 'appLogFailure'],
+      source,
+    );
+  }
+});
+
 test('destructuring preserves store and record aliases', () => {
   for (const pattern of ['{ session: current }', '{ session: current = fallback }']) {
     assert.deepEqual(
-      scan(`const ${pattern} = ref; return { ...current, appLogFailure: error };`).map(
-        (w) => w.field,
-      ),
+      scan(
+        `function copy(ref: SessionRef) { const ${pattern} = ref; return { ...current, appLogFailure: error }; }`,
+      ).map((w) => w.field),
       ['[whole-record-spread]', 'appLogFailure'],
     );
   }
@@ -145,6 +256,83 @@ test('destructuring preserves store and record aliases', () => {
       (w) => w.field,
     ),
     ['[patch-shape]'],
+  );
+});
+
+test('computed destructuring from a typed SessionRef cannot hide its session record', () => {
+  for (const source of [
+    'function copy(ref: SessionRef, key: string) { const { [key]: current } = ref; return { ...current }; }',
+    'function copy({ [key]: current }: SessionRef) { return { ...current }; }',
+  ]) {
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['[whole-record-spread]'],
+      source,
+    );
+  }
+  assert.deepEqual(
+    scan(
+      'function copy(params: object, key: string) { const { [key]: current } = params; return { ...current }; }',
+    ),
+    [],
+  );
+});
+
+test('literal computed SessionRef fields survive real store and typed parameter sources', () => {
+  const key = 'const key = "session"; ';
+  const fromLookup =
+    'const ref = store.lookup(address); const { [key]: current } = ref; current.appLogFailure = error;';
+  assert.deepEqual(
+    scan(key + fromLookup).map((write) => write.field),
+    ['appLogFailure'],
+  );
+  assert.deepEqual(
+    scan(
+      'function mutate(params: { ref: SessionRef }) { const key = "session"; const { [key]: current } = params.ref; current.appLogFailure = error; }',
+    ).map((write) => write.field),
+    ['appLogFailure'],
+  );
+});
+
+test('known SessionRef-returning store methods seed computed destructuring', () => {
+  for (const read of [
+    'store.lookup(address)',
+    'store.publish(address, session)',
+    'store.findByDevice(deviceId)',
+    'store.refresh(ref)',
+  ]) {
+    assert.deepEqual(
+      scan(
+        `const result = ${read}; const key = "session"; const { [key]: current } = result; current.lease = lease;`,
+      ).map((write) => write.field),
+      ['lease'],
+      read,
+    );
+  }
+});
+
+test('static destructuring carries typed ref properties into computed record reads', () => {
+  for (const pattern of ['{ ref }', "{ ['ref']: ref }", '{ ref: ref = fallback }']) {
+    const source = `function mutate(params: { ref: SessionRef }) {
+      const ${pattern} = params;
+      const key = 'session';
+      const { [key]: current } = ref;
+      current.appLogFailure = error;
+    }`;
+    assert.deepEqual(
+      scan(source).map((write) => write.field),
+      ['appLogFailure'],
+      source,
+    );
+  }
+  assert.deepEqual(
+    scan(`function mutate(params: { ref: object }) {
+      const { ref } = params;
+      const key = 'session';
+      const { [key]: current } = ref;
+      current.appLogFailure = error;
+    }`),
+    [],
   );
 });
 
@@ -213,7 +401,10 @@ test('the owning store can merge records, while unrelated updates and platform s
   );
   assert.deepEqual(scan('coordinator.update((session) => ({})); hash.update(data);'), []);
   assert.deepEqual(
-    scan('return { ...session, appLogFailure: error };', 'packages/platform-apple/src/session.ts'),
+    scan(
+      'function copy(session: SessionState) { return { ...session, appLogFailure: error }; }',
+      'packages/platform-apple/src/session.ts',
+    ),
     [],
   );
 });
