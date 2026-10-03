@@ -449,7 +449,7 @@ test('local close clears its matching device claim after teardown', async () => 
   });
   assert.equal(acquired.status, 'acquired');
   if (acquired.status !== 'acquired') return;
-  store.set('close-claim', {
+  store.publish('close-claim', {
     name: 'close-claim',
     device: android,
     deviceClaim: acquired.ownership,
@@ -494,7 +494,7 @@ test('#1391: a close-time script save failure still clears the device claim and 
       target: { kind: 'explicit', path: targetPath, force: false },
     },
   });
-  store.set('close-save-script-failure', session);
+  store.publish('close-save-script-failure', session);
   mockDispatch.mockResolvedValue(undefined);
 
   // Like the platform-close-error tests above, a failed close-time save is
