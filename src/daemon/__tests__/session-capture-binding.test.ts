@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import { makeRecordingSession } from './session-teardown.fixtures.ts';
-import { bindSessionScreenRecording } from '../screen-recording-session-binding.ts';
+import { bindSessionScreenRecording } from '../session-capture-binding.ts';
 
 test('clearing a capture refreshes a rebuilt record without losing its other changes', () => {
   const store = makeSessionStore();

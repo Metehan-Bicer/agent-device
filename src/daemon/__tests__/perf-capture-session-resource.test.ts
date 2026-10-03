@@ -1,4 +1,4 @@
-import { bindSessionPerfCapture } from '../perf-capture-session-binding.ts';
+import { bindSessionPerfCapture } from '../session-capture-binding.ts';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { AppError } from '@agent-device/kernel/errors';

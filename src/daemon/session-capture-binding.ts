@@ -51,3 +51,30 @@ export function bindSessionCapture<K extends string, H extends AsyncDisposable>(
     },
   });
 }
+
+export function bindSessionAudioProbe(sessionStore: SessionStore, ref: SessionRef) {
+  return bindSessionCapture(sessionStore, ref, {
+    read: (session) => session.audioProbe,
+    write: (audioProbe) => {
+      sessionStore.update(ref, { audioProbe });
+    },
+  });
+}
+
+export function bindSessionPerfCapture(sessionStore: SessionStore, ref: SessionRef) {
+  return bindSessionCapture(sessionStore, ref, {
+    read: (session) => session.perfCapture,
+    write: (perfCapture) => {
+      sessionStore.update(ref, { perfCapture });
+    },
+  });
+}
+
+export function bindSessionScreenRecording(sessionStore: SessionStore, ref: SessionRef) {
+  return bindSessionCapture(sessionStore, ref, {
+    read: (session) => session.screenRecording,
+    write: (screenRecording) => {
+      sessionStore.update(ref, { screenRecording });
+    },
+  });
+}

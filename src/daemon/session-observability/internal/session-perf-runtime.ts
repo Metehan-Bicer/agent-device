@@ -32,7 +32,7 @@ import type {
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionRef, SessionState } from '../../session-state.ts';
-import { bindSessionPerfCapture } from '../../perf-capture-session-binding.ts';
+import { bindSessionPerfCapture } from '../../session-capture-binding.ts';
 import { recordSessionAction } from '../../session-action-recorder.ts';
 import {
   admitRuntimePlan,

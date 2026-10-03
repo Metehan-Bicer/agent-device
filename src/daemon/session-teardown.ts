@@ -2,9 +2,11 @@ import { AppError } from '@agent-device/kernel/errors';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { cleanupRetainedMaterializedPathsForSession } from './materialized-path-registry.ts';
 import type { SessionRef, SessionState } from './session-state.ts';
-import { bindSessionAudioProbe } from './audio-probe-session-binding.ts';
-import { bindSessionPerfCapture } from './perf-capture-session-binding.ts';
-import { bindSessionScreenRecording } from './screen-recording-session-binding.ts';
+import {
+  bindSessionAudioProbe,
+  bindSessionPerfCapture,
+  bindSessionScreenRecording,
+} from './session-capture-binding.ts';
 import type { SessionStore } from './session-store.ts';
 import { finishLiveAudioProbe } from '@agent-device/capture-kit/audio-probe-session-resource';
 import { finishLivePerfCapture } from '@agent-device/capture-kit/perf-capture-session-resource';

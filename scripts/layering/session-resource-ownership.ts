@@ -1,4 +1,4 @@
-// Catches: a session resource field (appLog, appLogFailure, audioProbe, perfCapture) written
+// Catches: a session resource field (appLog, appLogFailure, audioProbe, perfCapture, screenRecording) written
 //   from outside its declared owner module — R7's session-state-ownership shape applied to the
 //   narrower set of per-resource fields these session-scoped runtimes carry, where the same
 //   aliasing hazard (get()/set() hand back and re-put the live reference) applies.
@@ -27,15 +27,12 @@ const SCANNED_ROOTS = ['src/daemon/', 'packages/capture-kit/src/capture-admissio
 const RESOURCE_OWNERS: Readonly<Record<string, ReadonlySet<string>>> = {
   appLog: new Set(['src/daemon/app-log-session-resource.ts', 'src/daemon/session-state.ts']),
   appLogFailure: new Set(['src/daemon/app-log-session-resource.ts', 'src/daemon/session-state.ts']),
-  audioProbe: new Set(['src/daemon/audio-probe-session-binding.ts', 'src/daemon/session-state.ts']),
+  audioProbe: new Set(['src/daemon/session-capture-binding.ts', 'src/daemon/session-state.ts']),
   screenRecording: new Set([
-    'src/daemon/screen-recording-session-binding.ts',
+    'src/daemon/session-capture-binding.ts',
     'src/daemon/session-state.ts',
   ]),
-  perfCapture: new Set([
-    'src/daemon/perf-capture-session-binding.ts',
-    'src/daemon/session-state.ts',
-  ]),
+  perfCapture: new Set(['src/daemon/session-capture-binding.ts', 'src/daemon/session-state.ts']),
 };
 
 /** Durable session-resource records have one whole-record construction owner per domain. */

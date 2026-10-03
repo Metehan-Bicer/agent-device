@@ -21,7 +21,7 @@ import type {
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionRef } from '../../session-state.ts';
-import { bindSessionAudioProbe } from '../../audio-probe-session-binding.ts';
+import { bindSessionAudioProbe } from '../../session-capture-binding.ts';
 import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
 type AudioParams = {

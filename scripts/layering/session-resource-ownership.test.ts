@@ -27,16 +27,10 @@ test('session resources are constructed only by their durable domain owners', ()
         `sessionStore.update(ref, { appLog: log, appLogFailure: undefined });`,
       ],
       [
-        'src/daemon/audio-probe-session-binding.ts',
-        `sessionStore.update(ref, { audioProbe: audio });`,
-      ],
-      [
-        'src/daemon/perf-capture-session-binding.ts',
-        `sessionStore.update(ref, { perfCapture: perf });`,
-      ],
-      [
-        'src/daemon/screen-recording-session-binding.ts',
-        `sessionStore.update(ref, { screenRecording: recording });`,
+        'src/daemon/session-capture-binding.ts',
+        `sessionStore.update(ref, { audioProbe: audio });
+         sessionStore.update(ref, { perfCapture: perf });
+         sessionStore.update(ref, { screenRecording: recording });`,
       ],
       [
         'packages/capture-kit/src/capture-admission/audio-probe-session-resource.ts',
