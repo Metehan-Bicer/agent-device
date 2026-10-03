@@ -156,6 +156,7 @@ export async function handleSessionClipboardCommand(params: {
   }
 
   const device = await resolveCommandDevice({ session, flags });
+  if (ref) sessionStore.requireCurrent(ref);
   const bound = await resolveBoundClipboardRuntime({
     device,
     action,

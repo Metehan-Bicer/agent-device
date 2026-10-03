@@ -32,9 +32,9 @@ type SessionCommandPrepareOutcome =
 /**
  * The one orchestration every session/selector-route leaf shares: guard, resolve the device,
  * admit-then-prepare via the caller's own strategy, expire the ref frame if the command mutates
- * (immediately before the prepared invocation runs, never after), derive and record the next
- * session. `prepare` is where each leaf's own admission and binding lives; everything around it
- * is identical, so it lives here once instead of once per command. Every leaf on this route now
+ * (immediately before the prepared invocation runs, never after), apply the optional session
+ * patch and record the action. `prepare` owns each leaf's admission and binding; the shared
+ * orchestration lives here once. Every leaf on this route now
  * supplies a bind-and-execute thunk — R57 retired the last capability-gate-then-`dispatchCommand`
  * one with `trigger-app-event`.
  */
@@ -144,7 +144,7 @@ type SessionRouteRuntimeResolver = (
 /**
  * The whole shape a migrated session-route leaf needs: admit and bind through the caller's own
  * resolver, then hand `runSessionOrSelectorDispatch` the bound runtime's `execute` to invoke after
- * expiring the frame. Only the resolver, the command name and the optional session derivation
+ * expiring the frame. Only the resolver, the command name and the optional post-execution session patch
  * differ per leaf, so one entry point here is what keeps `keyboard` and `trigger-app-event` from
  * drifting into two copies of the same wiring.
  */

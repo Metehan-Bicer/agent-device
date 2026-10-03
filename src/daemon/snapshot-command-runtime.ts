@@ -63,7 +63,8 @@ export async function dispatchSnapshotRuntimeCommand(
     session,
     device,
     async () => {
-      const { req, sessionName, logPath, sessionStore } = params;
+      const { req, logPath, sessionStore } = params;
+      const sessionName = ref?.address ?? params.sessionName;
       const capturedQuality: CapturedSnapshotQuality = {};
       const { runtime, sessions } = createSnapshotRuntime({
         req,

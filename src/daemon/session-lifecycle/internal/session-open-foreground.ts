@@ -114,7 +114,6 @@ export async function composeOpenWithInitialSnapshot(params: {
   if (!openResponse.ok || req.flags?.foreground !== true) return openResponse;
 
   try {
-    sessionStore.requireCurrent(ref);
     const snapshotResponse = await dispatchSnapshotViaRuntime({
       req: {
         ...req,
@@ -126,6 +125,7 @@ export async function composeOpenWithInitialSnapshot(params: {
         flags: { ...req.flags, snapshotInteractiveOnly: true },
       },
       sessionName: ref.address,
+      sessionRef: ref,
       logPath,
       sessionStore,
       inspectFacts: params.inspectFacts,

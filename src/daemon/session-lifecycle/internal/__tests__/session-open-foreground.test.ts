@@ -202,6 +202,7 @@ test('attaches the initial INTERACTIVE snapshot by delegating to the existing sn
       flags: { ...req.flags, snapshotInteractiveOnly: true },
     },
     sessionName: 'default',
+    sessionRef: ref,
     logPath: '/tmp/daemon.log',
     sessionStore,
     inspectFacts,

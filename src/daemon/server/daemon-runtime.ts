@@ -458,6 +458,7 @@ export async function startDaemonRuntime(
 
   const teardownDaemonSession = async (ref: SessionRef): Promise<void> => {
     const session = sessionStore.resolveCurrent(ref) ?? ref.session;
+    const runtimeHints = runtimeHintValues(sessionStore.getRuntimeHints(ref.address));
     try {
       await teardownDaemonSessionForShutdown({
         ref,
@@ -469,7 +470,7 @@ export async function startDaemonRuntime(
             scope: createDaemonRecoveryPlatformScope(),
             session: sessionToFinalize,
             stateDir: baseDir,
-            runtimeHints: runtimeHintValues(sessionStore.getRuntimeHints(sessionToFinalize.name)),
+            runtimeHints,
           }),
         beforeDelete: async (sessionToFinalize) => {
           await finalizeDaemonSessionLease({

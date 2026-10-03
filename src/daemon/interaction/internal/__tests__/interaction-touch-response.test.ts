@@ -1,3 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  withDiagnosticsScope,
+  flushDiagnosticsToSessionFile,
+} from '@agent-device/host-kit/diagnostics';
+import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts';
 import { test, expect, vi, beforeEach } from 'vitest';
 import { attachRefs } from '@agent-device/kernel/snapshot';
 import { makeSessionStore } from '../../../../__tests__/test-utils/store-factory.ts';
@@ -611,4 +618,36 @@ test('fill @ref preserves fallback coordinates for recording when platform resul
   expect(event?.kind).toBe('tap');
   expect(event?.x).toBe(60);
   expect(event?.y).toBe(40);
+});
+
+test('an already retired coordinate touch skips its frame probe without a warning', async () => {
+  const sessionStore = makeSessionStore();
+  const ref = sessionStore.publish('retired-point', makeSession('retired-point'));
+  sessionStore.retire(ref);
+  const capture = vi.fn();
+  const logPath = path.join(mkdtempForTestSync('retired-point-'), 'request.log');
+  await withDiagnosticsScope(
+    { command: 'click', session: ref.address, logPath, debug: true },
+    async () => {
+      const payloads = await buildTargetedTouchResponsePayloads({
+        params: {
+          req: { token: 't', command: 'click', positionals: ['1', '2'], session: ref.address },
+          sessionName: ref.address,
+          sessionRef: ref,
+          sessionStore,
+          contextFromFlags,
+          captureSnapshotForSession: capture,
+        },
+        result: { kind: 'point', point: { x: 1, y: 2 } },
+        staleRefsWarning: undefined,
+        extra: {},
+      });
+      expect(payloads.responseData).toMatchObject({ x: 1, y: 2 });
+      flushDiagnosticsToSessionFile({ force: true });
+    },
+  );
+  expect(capture).not.toHaveBeenCalled();
+  expect(fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '').not.toContain(
+    'touch_reference_frame_resolve_failed',
+  );
 });

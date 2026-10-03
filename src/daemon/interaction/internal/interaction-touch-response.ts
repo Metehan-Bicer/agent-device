@@ -293,8 +293,9 @@ export async function buildTargetedTouchResponsePayloads(params: {
   extra: Record<string, unknown>;
 }): Promise<InteractionResponsePayloads> {
   const { params: handlerParams, result, publicData, extra } = params;
+  const liveBeforeProbe = handlerParams.sessionStore.resolveCurrent(handlerParams.sessionRef!);
   const probedFrame =
-    result.kind === 'point'
+    liveBeforeProbe && result.kind === 'point'
       ? await resolveDirectTouchReferenceFrameSafely({
           ref: handlerParams.sessionRef!,
           flags: handlerParams.req.flags,

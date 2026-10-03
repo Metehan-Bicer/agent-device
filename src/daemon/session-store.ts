@@ -175,12 +175,14 @@ export class SessionStore {
     return this.runtimeHints.get(name);
   }
 
-  setRuntimeHints(name: string, hints: SessionRuntimeHints): void {
-    this.runtimeHints.set(name, hints);
+  setRuntimeHints(address: string, hints: SessionRuntimeHints | undefined): void {
+    if (hints) this.runtimeHints.set(address, hints);
+    else this.runtimeHints.delete(address);
   }
 
-  clearRuntimeHints(name: string): boolean {
-    return this.runtimeHints.delete(name);
+  clearRuntimeHints(ref: SessionRef): boolean {
+    this.requireCurrent(ref);
+    return this.runtimeHints.delete(ref.address);
   }
 
   recordAction(ref: SessionRef, entry: RecordActionEntry): void {

@@ -60,7 +60,7 @@ export function makeRecordingReplayInvoke(config: RecordingReplayInvokeConfig): 
     }
     const session = resolveInvokeSession(config, req);
     const evidence = isSessionRecording(session) ? config.evidence?.(req) : undefined;
-    sessionStore.recordAction(storeSessionForTest(sessionStore, session), {
+    sessionStore.recordAction(storeSessionForTest(sessionStore, session, config.sessionName), {
       command: req.command,
       positionals: req.positionals ?? [],
       flags: req.flags ?? {},

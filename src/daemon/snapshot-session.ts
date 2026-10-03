@@ -10,9 +10,10 @@ export async function resolveSessionDevice(
   sessionStore: SessionStore,
   sessionName: string,
   flags: DaemonRequest['flags'],
+  boundRef?: SessionRef,
 ) {
-  const ref = sessionStore.lookup(sessionName);
-  const session = ref?.session;
+  const ref = boundRef ?? sessionStore.lookup(sessionName);
+  const session = ref ? sessionStore.requireCurrent(ref) : undefined;
   const device = session?.device ?? (await resolveTargetDevice(flags ?? {}));
   return { ref, session, device };
 }
