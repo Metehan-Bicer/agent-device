@@ -19,6 +19,7 @@ test('session resources are constructed only by their durable domain owners', ()
           appLogFailure: failure,
           audioProbe: audio,
           perfCapture: perf,
+          screenRecording: recording,
         });`,
       ],
       [
@@ -39,6 +40,7 @@ test('session resources are constructed only by their durable domain owners', ()
       'src/daemon/handlers/planted.ts: session appLogFailure record constructed outside its owner',
       'src/daemon/handlers/planted.ts: session audioProbe record constructed outside its owner',
       'src/daemon/handlers/planted.ts: session perfCapture record constructed outside its owner',
+      'src/daemon/handlers/planted.ts: session screenRecording record constructed outside its owner',
     ],
   );
 });

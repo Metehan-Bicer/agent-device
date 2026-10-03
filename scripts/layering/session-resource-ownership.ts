@@ -29,10 +29,17 @@ const RESOURCE_OWNERS: Readonly<Record<string, ReadonlySet<string>>> = {
   appLogFailure: new Set(['src/daemon/app-log-session-resource.ts', 'src/daemon/session-state.ts']),
   audioProbe: new Set([
     'packages/capture-kit/src/capture-admission/audio-probe-session-resource.ts',
+    'src/daemon/audio-probe-session-binding.ts',
+    'src/daemon/session-state.ts',
+  ]),
+  screenRecording: new Set([
+    'packages/capture-kit/src/capture-admission/screen-recording-session-resource.ts',
+    'src/daemon/screen-recording-session-binding.ts',
     'src/daemon/session-state.ts',
   ]),
   perfCapture: new Set([
     'packages/capture-kit/src/capture-admission/perf-capture-session-resource.ts',
+    'src/daemon/perf-capture-session-binding.ts',
     'src/daemon/session-state.ts',
   ]),
 };

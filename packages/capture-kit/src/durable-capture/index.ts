@@ -14,6 +14,7 @@ export type {
   DurableCaptureRecordDefinition,
   DurableCaptureResourceDefinition,
   DurableCaptureSessionResource,
+  DurableCaptureSessionBinding,
   DurableCaptureSessionStore,
 } from './definition.ts';
 export type { FinishRecoveredDurableCaptureParams } from './finish-recovered.ts';
