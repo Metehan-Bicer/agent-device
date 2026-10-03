@@ -18,8 +18,10 @@ export async function stopSessionAppLog(params: {
   ref: SessionRef;
   sessionStore: SessionStore;
 }): Promise<void> {
+  const ref = params.sessionStore.refresh(params.ref);
+  if (!ref.session.appLog) return;
   const { forceCleanupSessionAppLog } = await import('./app-log-session-resource.ts');
-  await forceCleanupSessionAppLog(params);
+  await forceCleanupSessionAppLog({ ...params, ref });
 }
 
 export async function stopSessionPerfCapture(params: {

@@ -1,4 +1,4 @@
-import { makeCaptureSessionBinding } from './session-binding.fixtures.ts';
+import { makeCaptureSessionBinding, makeCaptureFixtureStore } from './session-binding.fixtures.ts';
 import path from 'node:path';
 import { vi, type Mock } from 'vitest';
 import {
@@ -78,15 +78,10 @@ export function makeDurableCaptureContext(
 ) {
   const sessionsDir = mkdtempForTestSync('durable-capture-resource-');
   const sessionName = 'session';
-  const sessions = new Map<string, TestCaptureSession>();
   const session: TestCaptureSession = { name: sessionName };
-  sessions.set(sessionName, session);
   const resolveSessionDir = (name: string): string => path.join(sessionsDir, name);
-  const sessionStore = {
-    get: (name: string) => sessions.get(name),
-    set: (name: string, next: TestCaptureSession) => void sessions.set(name, next),
-    resolveSessionDir,
-  };
+  const sessionStore = makeCaptureFixtureStore<TestCaptureSession>(resolveSessionDir);
+  sessionStore.set(sessionName, session);
   const reportUndurableCleanup: Mock<
     (device: DeviceInfo, outcome: DurableCaptureCleanupOutcome) => void
   > = vi.fn();
@@ -96,7 +91,7 @@ export function makeDurableCaptureContext(
       read: (session) => session.capture,
       replace: (session, capture) => ({ ...session, capture }),
     }),
-    sessions,
+    sessions: sessionStore,
     sessionsDir,
     resolveSessionDir,
     session,

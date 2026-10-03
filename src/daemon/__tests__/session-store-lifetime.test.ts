@@ -30,6 +30,10 @@ test('refs capture records while resolving rebuilds from the same lifetime', () 
     assert.equal(store.resolveCurrent(ref), rebuilt);
   }
   assert.equal(store.lookup(ADDRESS)?.session, rebuilt);
+  const refreshed = store.refresh(initial);
+  assert.equal(refreshed.lifetime, initial.lifetime);
+  assert.equal(refreshed.session, rebuilt);
+  assert.equal(initial.session, session);
   assert.equal(store.get('default'), undefined);
 });
 
@@ -56,6 +60,7 @@ test('address reuse with the same record still starts a different lifetime', () 
   store.setRuntimeHints(ADDRESS, { metroPort: 8082 });
   assert.notEqual(successor.lifetime, old.lifetime);
   assert.equal(store.resolveCurrent(old), undefined);
+  assert.equal(store.refresh(old), old);
   assert.throws(() => store.requireCurrent(old), ended);
   assert.throws(() => store.update(old, { appName: 'Stale' }), ended);
   assert.equal(store.retire(old), false);

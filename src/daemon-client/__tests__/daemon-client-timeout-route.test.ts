@@ -311,89 +311,115 @@ function timeoutDiagnostic(paths: DaemonPaths): Record<string, unknown> {
   return event.data;
 }
 
+function assertForcedRetirement(
+  retirement: DaemonRetirementResult | undefined,
+  removalFails: boolean,
+): void {
+  if (removalFails) {
+    assert.ok(retirement?.status === 'retained');
+    assert.equal(retirement.reason, 'retirement-unconfirmed');
+    assert.ok(retirement.termination?.status === 'exited');
+    assert.equal(retirement.termination.mode, 'forced');
+  } else {
+    assert.ok(retirement?.status === 'retired');
+    assert.equal(retirement.termination.mode, 'forced');
+  }
+}
+
 for (const transport of ['socket', 'http'] as const) {
-  test(`${transport} timeout waits for force retirement before reporting reset`, async (t) => {
-    if (await skipWhenLoopbackUnavailable(t)) return;
-    mockRunCmdSync.mockReturnValue({ exitCode: 1, stdout: '', stderr: '' });
-    const endpoint = await (transport === 'socket'
-      ? startHangingSocketServer()
-      : startHangingHttpServer());
-    const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-timeout-owner-'));
-    const child = spawnRegisteredDaemonFixture(
-      paths,
-      {
-        ...(transport === 'socket' ? { socketPort: endpoint.port } : { httpPort: endpoint.port }),
-        token: 'test-token',
-        version: 'test',
-        codeOrigin: 'checkout',
-        codeSignature: 'test',
-      },
-      undefined,
-    );
-    let exited = false;
-    void child.exited.then(() => {
-      exited = true;
-    });
-    let killRequested!: () => void;
-    const requested = new Promise<void>((resolve) => {
-      killRequested = resolve;
-    });
-    const actualKill = process.kill.bind(process);
-    let settled = false;
-    let outcome: Promise<unknown> | undefined;
-    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-      if (pid === child.pid && signal === 'SIGKILL') {
-        killRequested();
-        return true;
-      }
-      return actualKill(pid, signal);
-    });
-    try {
-      const info = await waitForRegisteredDaemonFixture(paths, child);
-      outcome = withDiagnosticsScope(
-        { debug: true, logPath: path.join(paths.baseDir, 'timeout-diagnostics.ndjson') },
-        () =>
-          sendRequest(
-            info,
-            { ...buildRequest(undefined), command: 'open' },
-            transport,
-            paths,
-            TIMEOUT_MS,
-          ),
-      ).then(
-        () => assert.fail('hanging request unexpectedly succeeded'),
-        (error: unknown) => {
-          settled = true;
-          return error;
+  for (const removalFails of [false, true]) {
+    test(`${transport} timeout awaits force exit when metadata removal ${removalFails ? 'fails' : 'succeeds'}`, async (t) => {
+      if (await skipWhenLoopbackUnavailable(t)) return;
+      mockRunCmdSync.mockReturnValue({ exitCode: 1, stdout: '', stderr: '' });
+      const endpoint = await (transport === 'socket'
+        ? startHangingSocketServer()
+        : startHangingHttpServer());
+      const paths = resolveDaemonPaths(mkdtempForTestSync('agent-device-timeout-owner-'));
+      const child = spawnRegisteredDaemonFixture(
+        paths,
+        {
+          ...(transport === 'socket' ? { socketPort: endpoint.port } : { httpPort: endpoint.port }),
+          token: 'test-token',
+          version: 'test',
+          codeOrigin: 'checkout',
+          codeSignature: 'test',
         },
+        undefined,
       );
-      await waitForForceStop(requested);
-      await sleep(30);
-      assert.equal(actualKill(child.pid, 0), true);
-      assert.equal(settled, false, 'request must remain pending while the daemon is alive');
-      kill.mockRestore();
-      actualKill(child.pid, 'SIGKILL');
-      await child.exited;
-      const error = await outcome;
-      assert.ok(error instanceof AppError);
-      assert.equal(normalizeError(error).details?.reason, 'daemon_transport_timeout');
-      const retirement = error.details?.retirement as DaemonRetirementResult | undefined;
-      assert.ok(retirement?.status === 'retired');
-      assert.equal(retirement.termination.mode, 'forced');
-      assert.equal(fs.existsSync(paths.infoPath), false);
-      assert.equal(fs.existsSync(paths.lockPath), false);
-      assert.equal(fs.existsSync(paths.baseDir), true);
-      assert.equal(timeoutDiagnostic(paths).daemonPreservedAfterTimeout, false);
-      assert.equal(mockRunCmdSync.mock.calls.filter(([cmd]) => cmd === 'pkill').length, 3);
-    } finally {
-      kill.mockRestore();
-      if (!exited) actualKill(child.pid, 'SIGKILL');
-      await child.exited;
-      await outcome;
-      await finishRegisteredDaemonFixture(paths.baseDir);
-      await closeLoopbackServer(endpoint.server);
-    }
-  });
+      let exited = false;
+      void child.exited.then(() => {
+        exited = true;
+      });
+      let killRequested!: () => void;
+      const requested = new Promise<void>((resolve) => {
+        killRequested = resolve;
+      });
+      const actualKill = process.kill.bind(process);
+      let settled = false;
+      let outcome: Promise<unknown> | undefined;
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === child.pid && signal === 'SIGKILL') {
+          killRequested();
+          return true;
+        }
+        return actualKill(pid, signal);
+      });
+      const actualUnlink = fs.unlinkSync.bind(fs);
+      const remove = vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
+        if (removalFails && file === paths.infoPath)
+          throw Object.assign(new Error('retained registration control'), { code: 'EACCES' });
+        actualUnlink(file);
+      });
+      try {
+        const info = await waitForRegisteredDaemonFixture(paths, child);
+        outcome = withDiagnosticsScope(
+          { debug: true, logPath: path.join(paths.baseDir, 'timeout-diagnostics.ndjson') },
+          () =>
+            sendRequest(
+              info,
+              { ...buildRequest(undefined), command: 'open' },
+              transport,
+              paths,
+              TIMEOUT_MS,
+            ),
+        ).then(
+          () => assert.fail('hanging request unexpectedly succeeded'),
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+        await waitForForceStop(requested);
+        await sleep(30);
+        assert.equal(actualKill(child.pid, 0), true);
+        assert.equal(settled, false, 'request must remain pending while the daemon is alive');
+        kill.mockRestore();
+        actualKill(child.pid, 'SIGKILL');
+        await child.exited;
+        const error = await outcome;
+        assert.ok(error instanceof AppError);
+        assert.equal(normalizeError(error).details?.reason, 'daemon_transport_timeout');
+        assertForcedRetirement(
+          error.details?.retirement as DaemonRetirementResult | undefined,
+          removalFails,
+        );
+        assert.equal(fs.existsSync(paths.infoPath), removalFails);
+        assert.equal(fs.existsSync(paths.lockPath), false);
+        assert.equal(fs.existsSync(paths.baseDir), true);
+        assert.equal(timeoutDiagnostic(paths).daemonPreservedAfterTimeout, false);
+        assert.equal(timeoutDiagnostic(paths).daemonPidForceKilled, true);
+        assert.equal(mockRunCmdSync.mock.calls.filter(([cmd]) => cmd === 'pkill').length, 3);
+      } finally {
+        remove.mockRestore();
+        kill.mockRestore();
+        if (!exited) actualKill(child.pid, 'SIGKILL');
+        await child.exited;
+        await outcome;
+        await finishRegisteredDaemonFixture(paths.baseDir);
+        await closeLoopbackServer(endpoint.server);
+      }
+    });
+  }
 }
 
 test('timeout retains a live registration without captured birth proof and reports that outcome', async (t) => {

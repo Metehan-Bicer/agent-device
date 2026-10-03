@@ -212,23 +212,22 @@ test('a joined busy contender waits for a published winner to become ready witho
   fs.writeFileSync(deferred, 'wait');
   const winner = spawnRegisteredDaemonFixture(paths, fields(http.port), { stdio: 'ignore' });
   await awaitFile(path.join(paths.baseDir, 'registration-held'));
-  let joined = false;
+  let contenderExit: ExecDetachedExit | undefined;
   spawn.mockImplementation((_command, _args, options) => {
     const child = spawnRegisteredDaemonFixture(paths, fields(http.port), options);
     void child.exited.then((exit) => {
-      assert.equal(exit.exitCode, DAEMON_STARTUP_EXIT_CODES.busy);
-      joined = true;
+      contenderExit = exit;
     });
     return child;
   });
   pause.mockImplementation(async () => {
-    if (joined) fs.rmSync(deferred, { force: true });
+    if (contenderExit) fs.rmSync(deferred, { force: true });
     await actualRetry.sleep(10);
   });
   const signal = vi.spyOn(process, 'kill');
   try {
     assert.equal((await sendToDaemon(request(paths))).ok, true);
-    assert.equal(joined, true);
+    assert.equal(contenderExit?.exitCode, DAEMON_STARTUP_EXIT_CODES.busy);
     assert.ok(probes >= 12);
     assert.equal(spawn.mock.calls.length, 1);
     assert.equal(http.rpcRequests.length, 1);

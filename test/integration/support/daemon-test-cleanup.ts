@@ -1,12 +1,17 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { normalizeError } from '@agent-device/kernel/errors';
+import { tryAcquireProcessLock } from '@agent-device/host-kit/file';
+import {
+  readCurrentOwnerIdentity,
+  ownerIdentityMatches,
+  type OwnerIdentity,
+} from '@agent-device/host-kit/process';
 import { stopDaemonProcess } from '../../../src/daemon-process.ts';
+import { resolveDaemonPaths } from '../../../src/daemon-resolution.ts';
 import {
   readRegisteredDaemonIdentity,
   readRegisteredDaemonOwnership,
 } from '../../../src/daemon-registration.ts';
-import { ownerIdentityMatches, type OwnerIdentity } from '@agent-device/host-kit/process';
 
 type TestDaemonIdentity = { pid: number; processStartTime?: string };
 
@@ -16,33 +21,55 @@ export async function cleanupDaemonTestState(
   observed: TestDaemonIdentity | null,
 ): Promise<void> {
   try {
-    const identities = [
-      observed ? { pid: observed.pid, startTime: observed.processStartTime ?? null } : null,
-      readIdentity(stateDir),
-    ].filter((identity): identity is OwnerIdentity => identity !== null);
-    if (identities.length === 0) throw new Error('No daemon lifetime was observed');
+    const paths = resolveDaemonPaths(stateDir);
+    const identities: OwnerIdentity[] = observed
+      ? [{ pid: observed.pid, startTime: observed.processStartTime ?? null }]
+      : [];
+    let registrationFailure: unknown;
+    try {
+      const registered = readIdentity(paths.infoPath);
+      if (registered) identities.push(registered);
+    } catch (error) {
+      registrationFailure = error;
+    }
+    const confirmed: OwnerIdentity[] = [];
+    let retained = false;
     for (const identity of identities) {
       const termination = await stopDaemonProcess(identity, {
         mode: 'graceful',
         termTimeoutMs: 1_500,
         killTimeoutMs: 1_500,
       });
-      if (termination.status !== 'exited') {
-        console.warn('Daemon test cleanup retained state:', stateDir, termination);
-        return;
-      }
+      if (termination.status === 'exited') confirmed.push(identity);
+      else if (termination.status === 'retained') retained = true;
     }
-    const current = readIdentity(stateDir);
-    if (current && !identities.some((identity) => ownerIdentityMatches(identity, current)))
-      throw new Error('Daemon registration changed during test cleanup');
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    if (registrationFailure) throw registrationFailure;
+    if (retained || confirmed.length === 0)
+      throw new Error('Daemon termination could not be confirmed');
+    const attempt = tryAcquireProcessLock({
+      lockDirPath: paths.lockPath,
+      owner: { ...readCurrentOwnerIdentity(), acquiredAtMs: Date.now() },
+      description: 'daemon test cleanup',
+    });
+    if (attempt.status !== 'acquired')
+      throw new Error('Daemon registration is held or unproven during test cleanup');
+    const { acquisition } = attempt;
+    try {
+      acquisition.assertHeld();
+      const current = readIdentity(paths.infoPath);
+      if (current && !confirmed.some((identity) => ownerIdentityMatches(identity, current)))
+        throw new Error('Daemon registration changed during test cleanup');
+      acquisition.assertHeld();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    } finally {
+      await acquisition.release();
+    }
   } catch (error) {
     console.warn('Daemon test cleanup retained state:', stateDir, normalizeError(error));
   }
 }
 
-function readIdentity(stateDir: string): OwnerIdentity | null {
-  const infoPath = path.join(stateDir, 'daemon.json');
+function readIdentity(infoPath: string): OwnerIdentity | null {
   if (readRegisteredDaemonOwnership(infoPath, null).state === 'absent') return null;
   const identity = readRegisteredDaemonIdentity(infoPath);
   if (!identity) throw new Error('Daemon registration identity is invalid or unreadable');

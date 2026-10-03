@@ -4,6 +4,7 @@ import type {
   ScreenRecordingCompletion,
   ScreenRecordingStartInput,
 } from '@agent-device/contracts/screen-recording-runtime';
+import { bindSessionScreenRecording } from '../session-capture-binding.ts';
 import {
   resolveScreenRecordingRuntimePlan,
   screenRecordingAdmissionUse,
@@ -32,7 +33,6 @@ import type { BindDeviceRuntime, BindExactDeviceRuntime } from '../request-runti
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
 import type { SessionRef, SessionState } from '../session-state.ts';
 import { bindRecordOnlyScreenRecording } from '../screen-recording-session-binding.ts';
-import { bindSessionScreenRecording } from '../session-capture-binding.ts';
 import { recordSessionAction } from '../session-action-recorder.ts';
 import {
   missingAppSessionResponse,
@@ -153,6 +153,7 @@ async function startRecording(
   if (!startFact.available) return buildRecordingUnsupportedResponse(startFact);
   const runtime = await params.bindDevice(session.device, use);
   const { fence, outputPaths } = prepareRecordingStart(params, session);
+  binding.assertAdoptable();
   const started = await runtime.operations.screenRecordingStart(
     screenRecordingStartInput(params, session, prepared, fence, outputPaths.outputPath),
   );

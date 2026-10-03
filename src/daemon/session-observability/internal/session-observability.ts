@@ -18,6 +18,7 @@ import { type PerfCaptureAdmissionLedger } from '@agent-device/capture-kit/perf-
 import { appLogResourceStore } from '../../app-log-resource-store.ts';
 import {
   adoptStartedSessionAppLog,
+  bindSessionAppLog,
   clearSessionAppLogFailure,
   finishSessionAppLog,
   inspectSessionAppLog,
@@ -375,6 +376,7 @@ async function startSessionAppLog(
       resourcePath,
       device: session.device,
     });
+    bindSessionAppLog(sessionStore, params.ref).assertAdoptable();
     const result = await start({
       sessionId: sessionName,
       appBundleId,

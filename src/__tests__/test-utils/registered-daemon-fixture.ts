@@ -85,6 +85,7 @@ export async function waitForRegisteredDaemonFixture(
   void child.exited.then((result) => {
     exit = result;
   });
+  await Promise.resolve();
   for (let attempt = 0; attempt < 400; attempt += 1) {
     if (exit)
       throw new Error(`Registered child exited before publication: ${JSON.stringify(exit)}`);

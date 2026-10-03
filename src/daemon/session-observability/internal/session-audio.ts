@@ -130,6 +130,7 @@ async function startAudioProbe(
     params.sessionStore.ensureSessionDir(params.sessionName),
     'audio-probe.json',
   );
+  binding.assertAdoptable();
   const started = await runtime.operations.audioProbeStart({
     sessionId: params.sessionName,
     statusPath,

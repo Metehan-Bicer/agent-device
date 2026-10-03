@@ -66,4 +66,6 @@ test('a pid outside the native range is unknown without a liveness probe', () =>
     'unknown',
   );
   assert.equal(mockIsProcessAlive.mock.calls.length, 0);
+  assert.equal(mockIsProcessZombie.mock.calls.length, 0);
+  assert.equal(mockReadProcessStartTime.mock.calls.length, 0);
 });

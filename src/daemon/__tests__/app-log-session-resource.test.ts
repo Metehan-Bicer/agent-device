@@ -19,6 +19,28 @@ import { adoptStartedSessionAppLog, finishSessionAppLog } from '../app-log-sessi
 import { createNextAppLogFence } from '../app-log-start-preflight.ts';
 import { appLogResourceStore } from '../app-log-resource-store.ts';
 import type { SessionState } from '../session-state.ts';
+import { stopSessionAppLog } from '../session-teardown.ts';
+
+test('teardown captures an adopted app log before its lazy import can cross retirement', async () => {
+  const context = makeContext();
+  const runtime = makeStartResult(context);
+  await adoptStartedSessionAppLog({
+    ...context,
+    ...runtime.result,
+    throwIfCanceled: () => {},
+  });
+  expect(context.ref.session.appLog).toBeUndefined();
+  const stopping = stopSessionAppLog(context);
+  context.sessionStore.retire(context.ref);
+  const successor = context.sessionStore.publish(context.sessionName, {
+    ...context.session,
+    appName: 'successor',
+  });
+  await stopping;
+  expect(runtime.forceCleanup).toHaveBeenCalledOnce();
+  expect(context.sessionStore.requireCurrent(successor)).toBe(successor.session);
+  expect(context.sessionStore.requireCurrent(successor).appLog).toBeUndefined();
+});
 
 test('start persists open recovery truth before adopting the live handle', async () => {
   const context = makeContext();

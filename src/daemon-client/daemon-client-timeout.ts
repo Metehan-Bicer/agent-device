@@ -73,7 +73,8 @@ export async function handleRequestTimeout(
       mode: 'force',
     });
   }
-  const retained = retirement?.status === 'retained';
+  const preserved =
+    retirement?.status === 'retained' && retirement.termination?.status !== 'exited';
   // The HINT, unlike cleanup, may only name Apple-runner involvement on
   // evidence this call site actually has: an explicitly declared Apple
   // platform selector, or the cleanup itself having terminated a matching
@@ -94,7 +95,7 @@ export async function handleRequestTimeout(
       daemonPidReset: retirement?.status === 'retired' ? info.pid : undefined,
       daemonPidForceKilled: resetDaemon ? daemonWasForceKilled(retirement) : undefined,
       daemonRetirement: retirement,
-      daemonPreservedAfterTimeout: retained || (!remote && !resetDaemon),
+      daemonPreservedAfterTimeout: preserved || (!remote && !resetDaemon),
       daemonBaseUrl: info.baseUrl,
     },
   });

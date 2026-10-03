@@ -105,6 +105,11 @@ export class SessionStore {
     return entry === ref.lifetime ? entry.current : undefined;
   }
 
+  refresh(ref: SessionRef): SessionRef {
+    const entry = this.sessions.get(ref.address);
+    return entry === ref.lifetime ? this.captureRef(ref.address, entry) : ref;
+  }
+
   requireCurrent(ref: SessionRef): SessionState {
     const session = this.resolveCurrent(ref);
     if (!session) {

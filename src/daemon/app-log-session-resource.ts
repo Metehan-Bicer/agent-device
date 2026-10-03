@@ -137,7 +137,7 @@ export function clearSessionAppLogFailure(params: {
   });
 }
 
-function bindSessionAppLog(sessionStore: SessionStore, ref: SessionRef) {
+export function bindSessionAppLog(sessionStore: SessionStore, ref: SessionRef) {
   return bindSessionCapture(sessionStore, ref, {
     read: (session) => session.appLog,
     write: (appLog) => {

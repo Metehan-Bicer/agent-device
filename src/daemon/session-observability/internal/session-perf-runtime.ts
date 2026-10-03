@@ -217,6 +217,8 @@ async function startPerfCapture(
     resourcePath,
     device: session.device,
   });
+  const binding = bindSessionPerfCapture(params.sessionStore, params.ref);
+  binding.assertAdoptable();
   const started = await runtime.operations.perfNativeCaptureStart({
     sessionId: params.sessionName,
     appId: session.appBundleId,
@@ -228,7 +230,7 @@ async function startPerfCapture(
   });
   await adoptStartedPerfCapture({
     admissionLedger: requirePerfCaptureAdmissionLedger(params),
-    binding: bindSessionPerfCapture(params.sessionStore, params.ref),
+    binding,
     device: session.device,
     owner: runtime.owner,
     fence,

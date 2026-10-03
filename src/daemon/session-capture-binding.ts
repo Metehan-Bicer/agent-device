@@ -14,6 +14,7 @@ export function bindSessionCapture<K extends string, H extends AsyncDisposable>(
     write(resource: DurableCaptureSessionResource<K, H> | undefined): void;
   }>,
 ): DurableCaptureSessionBinding<K, H> {
+  let retained = slot.read(sessionStore.resolveCurrent(ref) ?? ref.session);
   const assertAdoptable = (): void => {
     sessionStore.assertAdmissionOpen(ref.address);
     if (slot.read(sessionStore.requireCurrent(ref))) {
@@ -26,7 +27,11 @@ export function bindSessionCapture<K extends string, H extends AsyncDisposable>(
   return Object.freeze({
     address: ref.address,
     sessionDir: sessionStore.resolveSessionDir(ref.address),
-    read: () => slot.read(sessionStore.resolveCurrent(ref) ?? ref.session),
+    read: () => {
+      const current = sessionStore.resolveCurrent(ref);
+      if (current) retained = slot.read(current);
+      return retained;
+    },
     assertAdoptable,
     canPersist: () => {
       const current = sessionStore.resolveCurrent(ref);
@@ -35,6 +40,7 @@ export function bindSessionCapture<K extends string, H extends AsyncDisposable>(
     adopt: (resource) => {
       assertAdoptable();
       slot.write(resource);
+      retained = resource;
     },
     clear: (expected) => {
       const current = sessionStore.resolveCurrent(ref);
@@ -47,6 +53,7 @@ export function bindSessionCapture<K extends string, H extends AsyncDisposable>(
       )
         return 'resource-changed';
       slot.write(undefined);
+      retained = undefined;
       return 'cleared';
     },
   });
