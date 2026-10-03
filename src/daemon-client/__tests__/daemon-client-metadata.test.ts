@@ -1,28 +1,12 @@
 import assert from 'node:assert/strict';
-import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, test, vi } from 'vitest';
+import { test } from 'vitest';
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
-import {
-  stopAndRetireDaemon,
-  tryAcquireDaemonRegistration,
-} from '../../daemon-registration-owner.ts';
-import {
-  readDaemonInfo,
-  stopDaemonProcessForTakeover,
-  type DaemonInfo,
-} from '../daemon-client-metadata.ts';
-import { isAgentDeviceDaemonProcess, stopDaemonProcess } from '../../daemon-process.ts';
+import { tryAcquireDaemonRegistration } from '../../daemon-registration-owner.ts';
+import { readDaemonInfo, type DaemonInfo } from '../daemon-client-metadata.ts';
 import { resolveDaemonPaths } from '../../daemon-resolution.ts';
-
-vi.mock('../../daemon-process.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../daemon-process.ts')>()),
-  isAgentDeviceDaemonProcess: vi.fn(),
-  stopDaemonProcess: vi.fn(),
-}));
-afterEach(() => vi.resetAllMocks());
 
 // The reuse decision is only as good as the identity that survives the round trip
 // through `daemon.json`: a client cannot compare what the file lost (#2458).
@@ -67,42 +51,4 @@ test('a registration this version did not write reads back unreported', () => {
 
     assert.equal(readDaemonInfo(infoPath)?.codeOrigin, undefined);
   }
-});
-
-for (const artifact of ['daemon.json', 'daemon.lock']) {
-  test(`unconfirmed startup stop retains ${artifact} without claiming cleanup`, async () => {
-    const [stateDir] = scratchStateDir();
-    const paths = resolveDaemonPaths(stateDir);
-    const file = path.join(stateDir, artifact);
-    const contents = JSON.stringify({
-      pid: 7,
-      processStartTime: 'start',
-      port: 1234,
-      token: 'secret',
-    });
-    fs.writeFileSync(file, contents);
-    vi.mocked(isAgentDeviceDaemonProcess).mockReturnValue(true);
-    vi.mocked(stopDaemonProcess).mockResolvedValue({ status: 'retained', reason: 'exit-timeout' });
-    const result = await stopAndRetireDaemon({
-      paths,
-      observed: { pid: 7, startTime: 'start' },
-      mode: 'graceful',
-    });
-    assert.equal(fs.readFileSync(file, 'utf8'), contents);
-    assert.equal(result.removedInfo, false);
-    assert.equal(result.status, 'retained');
-    if (result.status === 'retained') assert.equal(result.reason, 'exit-unconfirmed');
-  });
-}
-
-test('a retained takeover keeps its reason at the normalized error boundary', async () => {
-  vi.mocked(stopDaemonProcess).mockResolvedValue({ status: 'retained', reason: 'exit-timeout' });
-  await assert.rejects(
-    stopDaemonProcessForTakeover({ pid: 7, token: 'secret', processStartTime: 'start' }),
-    (error: unknown) => {
-      assert.ok(error instanceof AppError);
-      assert.equal(normalizeError(error).details?.reason, 'daemon_exit_unconfirmed');
-      return true;
-    },
-  );
 });

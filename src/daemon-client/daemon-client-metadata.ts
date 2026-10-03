@@ -1,6 +1,4 @@
 import fs from 'node:fs';
-import { AppError } from '@agent-device/kernel/errors';
-import { stopDaemonProcess, type DaemonTerminationResult } from '../daemon-process.ts';
 
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 
@@ -31,9 +29,6 @@ export type DaemonMetadataState = {
   hasInfo: boolean;
   hasLock: boolean;
 };
-
-const DAEMON_TAKEOVER_TERM_TIMEOUT_MS = 3000;
-const DAEMON_TAKEOVER_KILL_TIMEOUT_MS = 1000;
 
 export function readDaemonInfo(infoPath: string): DaemonInfo | null {
   const data = readJsonFile(infoPath);
@@ -85,42 +80,11 @@ function readPositiveInteger(value: unknown): number | undefined {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 
-export function removeDaemonInfo(infoPath: string): void {
-  removeFileIfExists(infoPath);
-}
-
-export function removeDaemonLock(lockPath: string): void {
-  removeFileIfExists(lockPath);
-}
-
 export function getDaemonMetadataState(paths: DaemonPaths): DaemonMetadataState {
   return {
     hasInfo: fs.existsSync(paths.infoPath),
     hasLock: fs.existsSync(paths.lockPath),
   };
-}
-
-export async function stopDaemonProcessForTakeover(
-  info: DaemonInfo,
-): Promise<DaemonTerminationResult> {
-  const termination = await stopDaemonProcess(
-    { pid: info.pid, startTime: info.processStartTime ?? null },
-    {
-      mode: 'graceful',
-      termTimeoutMs: DAEMON_TAKEOVER_TERM_TIMEOUT_MS,
-      killTimeoutMs: DAEMON_TAKEOVER_KILL_TIMEOUT_MS,
-    },
-  );
-  requireDaemonExit(termination);
-  return termination;
-}
-
-function requireDaemonExit(termination: DaemonTerminationResult): void {
-  if (termination.status !== 'retained') return;
-  throw new AppError('COMMAND_FAILED', 'Daemon exit could not be confirmed.', {
-    reason: 'daemon_exit_unconfirmed',
-    termination,
-  });
 }
 
 export function isRemoteDaemon(info: DaemonInfo): boolean {
@@ -145,13 +109,5 @@ function readJsonFile(filePath: string): unknown | null {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
   } catch {
     return null;
-  }
-}
-
-function removeFileIfExists(filePath: string): void {
-  try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch {
-    // Best-effort cleanup only.
   }
 }

@@ -27,6 +27,8 @@ import { resolveDaemonPaths, type DaemonPaths } from '../../daemon-resolution.ts
 import { sendToDaemon, type DaemonRequest, type DaemonResponse } from '../daemon-client.ts';
 import { attachActiveSessionAddressHint } from '../daemon-client-lifecycle.ts';
 import { sendRequest } from '../daemon-client-transport.ts';
+import { readDaemonInfo } from '../daemon-client-metadata.ts';
+import type { DaemonRetirementResult } from '../../daemon-registration-owner.ts';
 import {
   closeLoopbackServer,
   listenOnLoopback,
@@ -615,12 +617,18 @@ test('sendRequest timeout cleanup uses resolved daemon paths instead of request 
   const daemonPaths = resolveDaemonPaths(daemonStateDir);
   const requestFlagPaths = resolveDaemonPaths(requestFlagStateDir);
   const daemon = await startHangingHttpDaemonFixture();
-  writeDaemonInfo(daemonPaths, {
-    httpPort: daemon.port,
-    transport: 'http',
-    pid: 999_999,
-  });
-  writeDaemonLock(daemonPaths, { pid: 999_999 });
+  mockSleep.mockImplementation(actualRetry.sleep);
+  const child = spawnRegisteredDaemonFixture(
+    daemonPaths,
+    {
+      httpPort: daemon.port,
+      token: 'local-secret',
+      version: readVersion(),
+      codeOrigin: 'checkout',
+      codeSignature: currentDaemonCodeSignature(),
+    },
+    undefined,
+  );
   writeDaemonInfo(requestFlagPaths, {
     httpPort: daemon.port,
     transport: 'http',
@@ -638,26 +646,26 @@ test('sendRequest timeout cleanup uses resolved daemon paths instead of request 
   };
 
   try {
+    let info = readDaemonInfo(daemonPaths.infoPath);
+    for (let attempt = 0; !info && attempt < 200; attempt += 1) {
+      await actualRetry.sleep(10);
+      info = readDaemonInfo(daemonPaths.infoPath);
+    }
+    assert.ok(info);
     let thrown: unknown;
     try {
-      await sendRequest(
-        {
-          token: 'local-secret',
-          pid: 999_999,
-          httpPort: daemon.port,
-          transport: 'http',
-        },
-        request,
-        'http',
-        daemonPaths,
-        50,
-      );
+      await sendRequest(info, request, 'http', daemonPaths, 50);
     } catch (error) {
       thrown = error;
     }
 
     assert.ok(thrown instanceof AppError);
     assert.equal(thrown.message, 'Daemon request timed out');
+    assert.equal(
+      (thrown.details?.retirement as DaemonRetirementResult | undefined)?.status,
+      'retired',
+    );
+    await child.exited;
     assert.deepEqual(daemon.seenPaths, ['POST /rpc']);
     assert.equal(fs.existsSync(daemonPaths.infoPath), false);
     assert.equal(fs.existsSync(daemonPaths.lockPath), false);
@@ -665,7 +673,7 @@ test('sendRequest timeout cleanup uses resolved daemon paths instead of request 
     assert.equal(fs.existsSync(requestFlagPaths.lockPath), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    fs.rmSync(daemonStateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(daemonStateDir);
     fs.rmSync(requestFlagStateDir, { recursive: true, force: true });
   }
 });
