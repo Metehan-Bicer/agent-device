@@ -43,6 +43,7 @@ import {
   type RuntimeHintApplyOperation,
   type RuntimeHintClearOperation,
 } from './session-open-execution.ts';
+import { requireOpenSessionAdmission } from './session-open-state.ts';
 import { errorResponse } from '@agent-device/kernel/contracts';
 
 export type SessionOpenCommandInput = Readonly<{
@@ -152,15 +153,17 @@ async function resolveOpenRuntimePlanAdmission(params: {
 async function handleOpenCommand(params: SessionOpenCommandInput): Promise<DaemonResponse> {
   const { sessionName, logPath, sessionStore } = params;
 
-  const session = sessionStore.get(sessionName);
+  const existingRef = sessionStore.lookup(sessionName);
   const foregroundResolution = await resolveForegroundOpenRequest({
     req: params.req,
-    hasExistingSession: Boolean(session),
+    hasExistingSession: Boolean(existingRef),
   });
   if (foregroundResolution.type === 'response') return foregroundResolution.response;
   const req = foregroundResolution.type === 'resolved' ? foregroundResolution.req : params.req;
 
-  if (session) {
+  requireOpenSessionAdmission(sessionStore, sessionName, existingRef);
+  if (existingRef) {
+    const session = sessionStore.requireCurrent(existingRef);
     if (req.flags?.saveScript) {
       return errorResponse(
         'INVALID_ARGS',
@@ -193,7 +196,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
 
     // Reopening renews the claim before anything touches the device, so no other daemon ever sees
     // a device this session is actively coming back to as one its owner walked away from.
-    const lostClaim = await renewOpenSessionClaim(session.device, session.deviceClaim);
+    const admittedSession = sessionStore.requireCurrent(existingRef);
+    const lostClaim = await renewOpenSessionClaim(
+      admittedSession.device,
+      admittedSession.deviceClaim,
+    );
     if (lostClaim) return lostClaim;
 
     const device = await refreshSessionDeviceIfNeeded(session.device);
@@ -212,13 +219,15 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
     const { admission, runtimeHintPlan } = runtimePlanAdmission;
     // The preparation can boot a device, clear native hints, or warm a runner. An existing
     // frame becomes stale before those effects, rather than after the later visible launch.
-    expireRefFrame(session);
+    requireOpenSessionAdmission(sessionStore, sessionName, existingRef);
+    const preparedSession = sessionStore.requireCurrent(existingRef);
+    expireRefFrame(preparedSession);
     const details = await prepareOpenCommandDetails({
       req,
       logPath,
       surface: surfaceResult,
       openTarget,
-      existingSession: session,
+      existingSession: preparedSession,
       runtime: admission.runtime,
       runtimeHintPlan,
       clearRuntimeHints: admission.clearRuntimeHints,
@@ -228,7 +237,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
 
     // Preparation may have booted the device to reach this surface, and a boot an owner caused for
     // its own reopen cannot later read as a boot its owner walked away from.
-    const reclaimed = await renewOpenSessionClaim(device, session.deviceClaim);
+    requireOpenSessionAdmission(sessionStore, sessionName, existingRef);
+    const reclaimed = await renewOpenSessionClaim(
+      device,
+      sessionStore.requireCurrent(existingRef).deviceClaim,
+    );
     if (reclaimed) return reclaimed;
 
     return await completeOpenCommand({
@@ -249,7 +262,7 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       lifecycle: admission.runtime,
       applyRuntimeHints: admission.applyRuntimeHints,
       surface: surfaceResult,
-      existingSession: session,
+      existingRef,
       selection,
     });
   }

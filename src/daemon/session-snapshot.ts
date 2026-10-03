@@ -38,6 +38,10 @@ export function setSessionSnapshot(session: SessionState, snapshot: SnapshotStat
   }
 }
 
+export function clearSessionSnapshot(session: SessionState): void {
+  session.snapshot = undefined;
+}
+
 /** Replaces a snapshot/diff observation and its scoped lineage without issuing client refs. */
 export function setCommandSnapshot(
   session: SessionState,

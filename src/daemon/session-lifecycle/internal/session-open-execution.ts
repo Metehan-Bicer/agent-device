@@ -8,10 +8,10 @@ import {
   type DeviceSelectionResult,
 } from '@agent-device/device-selection/device-selection-resolver';
 import type { BoundDeviceRuntime } from '@agent-device/contracts/platform-runtime';
-import type { SessionScope, SessionSurface } from '@agent-device/contracts/session';
+import type { SessionSurface } from '@agent-device/contracts/session';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
+import type { SessionRef, SessionState } from '../../session-state.ts';
 import {
   abortAuthoringOnSecondOpen,
   armAuthoringOnOpen,
@@ -30,7 +30,8 @@ import {
   setSessionRuntimeHintsForOpen,
 } from '../../session-runtime.ts';
 import { STARTUP_SAMPLE_METHOD, type StartupPerfSample } from './session-startup-metrics.ts';
-import { buildNextOpenSession, buildOpenResult } from './session-open-surface.ts';
+import { buildOpenResult } from './session-open-surface.ts';
+import { publishOpenSession, requireOpenSessionAdmission } from './session-open-state.ts';
 import { markDeferredInteractionOutcome } from '../../deferred-interaction-outcome.ts';
 import { emitDiagnostic, getDiagnosticsMeta } from '@agent-device/host-kit/diagnostics';
 import {
@@ -42,12 +43,7 @@ import {
   buildForeignWorkspaceSessionConflict,
 } from '../../session-recovery-hints.ts';
 import { describeOpenWaitForRefusal } from '../../open-device-contention-wait.ts';
-import {
-  isImplicitSessionScopeConflict,
-  resolveSessionScope,
-  resolvePublicSessionName,
-} from '../../session-routing.ts';
-import { resolveSessionLeaseForRequest } from '../../lease-lifecycle.ts';
+import { isImplicitSessionScopeConflict } from '../../session-routing.ts';
 import { applicationLifecycleExecutionFromRequest } from '../../application-lifecycle-execution.ts';
 import {
   abandonDeviceClaim,
@@ -91,10 +87,6 @@ export type RuntimeHintApplyOperation = BoundDeviceRuntime<
 export type RuntimeHintClearOperation = BoundDeviceRuntime<
   typeof openApplicationWithRuntimeHintClearUse
 >['operations']['clearRuntimeHints'];
-
-function resolveOpenSessionScope(req: DaemonRequest): SessionScope {
-  return req.internal?.resolvedSessionScope ?? resolveSessionScope(req);
-}
 
 function applyOrdinaryScriptRecordingOpenOutcome(params: {
   session: SessionState;
@@ -188,7 +180,7 @@ export async function completeOpenCommand(params: {
   runtimeHints: ReturnType<SessionStore['getRuntimeHints']>;
   lifecycle: OpenApplicationRuntime;
   applyRuntimeHints?: RuntimeHintApplyOperation;
-  existingSession?: SessionState;
+  existingRef?: SessionRef;
   deviceClaim?: DeviceClaimSessionOwnership;
   /** The stale claim this open released before taking the device, when there was one. */
   tookOverDeviceClaim?: TakenOverDeviceClaim;
@@ -208,11 +200,14 @@ export async function completeOpenCommand(params: {
     runtimeHints,
     lifecycle,
     applyRuntimeHints,
-    existingSession,
+    existingRef,
     deviceClaim,
     tookOverDeviceClaim,
     selection,
   } = params;
+  requireOpenSessionAdmission(sessionStore, sessionName, existingRef);
+  const existingSession = existingRef ? sessionStore.requireCurrent(existingRef) : undefined;
+  const freshnessBaseline = existingSession?.snapshot;
   const shouldRelaunch = req.flags?.relaunch === true;
   let sessionAppBundleId = appBundleId;
   const openCommandStartedAtMs = Date.now();
@@ -225,10 +220,14 @@ export async function completeOpenCommand(params: {
     surface,
     sessionAppBundleId,
     appName,
-    existingSession,
+    existingRef,
   });
   if (provisionalSession.type === 'response') return provisionalSession.response;
-  const openDispatchSession = provisionalSession.session ?? existingSession;
+  const openDispatchRef = provisionalSession.ref;
+  requireOpenSessionAdmission(sessionStore, sessionName, openDispatchRef);
+  const openDispatchSession = openDispatchRef
+    ? sessionStore.requireCurrent(openDispatchRef)
+    : undefined;
   const openStartedAtMs = Date.now();
   const outcome = await lifecycle.operations.openApplication({
     target: openTarget,
@@ -247,7 +246,7 @@ export async function completeOpenCommand(params: {
     execution: applicationLifecycleExecutionFromRequest(
       req,
       logPath,
-      existingSession?.trace?.outPath,
+      openDispatchSession?.trace?.outPath,
     ),
   });
   sessionAppBundleId = outcome.appBundleId ?? sessionAppBundleId;
@@ -261,30 +260,28 @@ export async function completeOpenCommand(params: {
     return errorResponse(canceled.code, canceled.message, canceled.details);
   }
 
-  if (existingSession) {
-    // Mark before buildNextOpenSession clears the stored snapshot. `open` is one of the few
-    // nav-sensitive commands that would otherwise lose its pre-action freshness baseline.
+  requireOpenSessionAdmission(sessionStore, sessionName, openDispatchRef);
+  if (existingRef) {
     markDeferredInteractionOutcome({
-      session: existingSession,
+      session: sessionStore.requireCurrent(existingRef),
       command: 'open',
       positionals: [],
       flags: undefined,
+      androidFreshnessBaseline: freshnessBaseline,
     });
   }
-  const nextSession = buildNextOpenSession({
-    existingSession: openDispatchSession,
-    sessionName: existingSession?.name ?? resolvePublicSessionName(req),
-    sessionScope: existingSession?.sessionScope ?? resolveOpenSessionScope(req),
+  const nextRef = publishOpenSession({
+    req,
+    sessionStore,
+    sessionName,
+    existingRef: openDispatchRef,
     device,
     surface,
     appBundleId: sessionAppBundleId,
     appName,
+    deviceClaim,
   });
-  nextSession.lease = resolveSessionLeaseForRequest({
-    req,
-    existingLease: existingSession?.lease,
-  });
-  if (deviceClaim) nextSession.deviceClaim = deviceClaim;
+  const nextSession = sessionStore.requireCurrent(nextRef);
   if (req.runtime !== undefined)
     setSessionRuntimeHintsForOpen(sessionStore, sessionName, runtimeHints);
   const sessionStateDir = sessionStore.ensureSessionDir(sessionName);
@@ -322,11 +319,10 @@ export async function completeOpenCommand(params: {
   }
   applyOrdinaryScriptRecordingOpenOutcome({
     session: nextSession,
-    existingSession,
+    existingSession: existingRef ? nextSession : undefined,
     saveScriptRequested: Boolean(req.flags?.saveScript),
     responseData: openResult,
   });
-  sessionStore.set(sessionName, nextSession);
   sessionStore.recordAction(nextSession, {
     command: 'open',
     positionals: openPositionals,
@@ -345,45 +341,28 @@ async function prepareOpenDispatchSession(params: {
   surface: SessionSurface;
   sessionAppBundleId: string | undefined;
   appName: string | undefined;
-  existingSession: SessionState | undefined;
+  existingRef: SessionRef | undefined;
 }): Promise<
-  { type: 'session'; session?: SessionState } | { type: 'response'; response: DaemonResponse }
+  { type: 'session'; ref?: SessionRef } | { type: 'response'; response: DaemonResponse }
 > {
-  const { req, sessionName, sessionStore, existingSession } = params;
+  const { req, sessionName, sessionStore, existingRef } = params;
   const beforeDispatch = req.internal?.openLifecycle?.beforeDispatch;
-  if (!beforeDispatch) return { type: 'session', session: existingSession };
-  const provisionalSession = createProvisionalOpenDispatchSession(params);
-  sessionStore.set(sessionName, provisionalSession);
+  if (!beforeDispatch) return { type: 'session', ref: existingRef };
+  const ref = publishOpenSession({
+    req,
+    sessionName,
+    sessionStore,
+    existingRef,
+    device: params.device,
+    surface: params.surface,
+    appBundleId: params.sessionAppBundleId,
+    appName: params.appName,
+  });
   const lifecycleResponse = await beforeDispatch();
   if (lifecycleResponse && !lifecycleResponse.ok)
     return { type: 'response', response: lifecycleResponse };
-  return { type: 'session', session: sessionStore.get(sessionName) ?? provisionalSession };
-}
-
-function createProvisionalOpenDispatchSession(params: {
-  req: DaemonRequest;
-  sessionName: string;
-  device: DeviceInfo;
-  surface: SessionSurface;
-  sessionAppBundleId: string | undefined;
-  appName: string | undefined;
-  existingSession: SessionState | undefined;
-}): SessionState {
-  const { req, device, surface, sessionAppBundleId, appName, existingSession } = params;
-  const provisionalSession = buildNextOpenSession({
-    existingSession,
-    sessionName: existingSession?.name ?? resolvePublicSessionName(req),
-    sessionScope: existingSession?.sessionScope ?? resolveOpenSessionScope(req),
-    device,
-    surface,
-    appBundleId: sessionAppBundleId,
-    appName,
-  });
-  provisionalSession.lease = resolveSessionLeaseForRequest({
-    req,
-    existingLease: existingSession?.lease,
-  });
-  return provisionalSession;
+  requireOpenSessionAdmission(sessionStore, sessionName, ref);
+  return { type: 'session', ref: sessionStore.refresh(ref) };
 }
 
 /**
@@ -482,6 +461,7 @@ export async function openNewSessionWithDeviceClaim(params: {
     reconcileOrphanedDeviceClaim,
     selection,
   } = params;
+  requireOpenSessionAdmission(sessionStore, sessionName, undefined);
   const conflict = findNewSessionDeviceConflict({ req, device, sessionStore });
   if (conflict) return conflict;
 
@@ -507,6 +487,7 @@ export async function openNewSessionWithDeviceClaim(params: {
       sessionStore,
     });
   try {
+    requireOpenSessionAdmission(sessionStore, sessionName, undefined);
     const details = await prepareOpenCommandDetails({
       req,
       logPath,
