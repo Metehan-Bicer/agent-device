@@ -14,8 +14,6 @@ export type DurableCaptureSessionResource<K extends string, H extends AsyncDispo
   envelope: DurableResourceEnvelope<K>;
 }>;
 
-export type DurableCaptureSlotClearResult = 'cleared' | 'retired' | 'resource-changed';
-
 export type DurableCaptureSessionBinding<K extends string, H extends AsyncDisposable> = Readonly<{
   address: string;
   sessionDir: string;
@@ -23,7 +21,7 @@ export type DurableCaptureSessionBinding<K extends string, H extends AsyncDispos
   assertAdoptable(): void;
   canPersist(): boolean;
   adopt(resource: DurableCaptureSessionResource<K, H>): void;
-  clear(expected: DurableCaptureSessionResource<K, H>): DurableCaptureSlotClearResult;
+  clear(expected: DurableCaptureSessionResource<K, H>): 'cleared' | 'retired' | 'resource-changed';
 }>;
 
 export type DurableCaptureSessionStore<S> = Readonly<{
