@@ -190,13 +190,20 @@ async function ensureRemoteDaemon(settings: DaemonClientSettings): Promise<Ensur
 
 async function readReusableLocalDaemon(
   settings: DaemonClientSettings,
-  deadline?: number,
+  options: { deadline?: number; waitForLiveStartup?: boolean } = {},
 ): Promise<DaemonInfo | null> {
+  const { deadline } = options;
   const inspection = inspectProcessLock(settings.paths.lockPath);
   if (inspection.state === 'unproven') throw daemonRegistrationUnprovenError(settings, inspection);
   const existing = readDaemonInfo(settings.paths.infoPath);
   if (!existing) return null;
   if (!registrationAllowsDaemonObservation(inspection, existing)) return null;
+  if (
+    options.waitForLiveStartup &&
+    isProcessAlive(existing.pid) &&
+    !(await canConnect(existing, 'auto', remainingStartupBudget(deadline)))
+  )
+    return null;
 
   const decision = await resolveDaemonTakeover(existing, {
     onClientTransport: () =>
@@ -769,7 +776,7 @@ async function observeContendingDaemon(
 ): Promise<DaemonStartupWaitResult | null> {
   let winner: DaemonInfo | null;
   try {
-    winner = await readReusableLocalDaemon(settings, deadline);
+    winner = await readReusableLocalDaemon(settings, { deadline, waitForLiveStartup: true });
   } catch (error) {
     if (error instanceof AppError && error.details?.reason === 'daemon_registration_unproven')
       return { kind: 'unproven', error };

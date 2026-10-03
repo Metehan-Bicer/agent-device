@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { isProcessPid } from '@agent-device/host-kit/process';
 
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 
@@ -42,7 +43,7 @@ export function readDaemonInfo(infoPath: string): DaemonInfo | null {
     token,
     ...ports,
     transport: readDaemonInfoTransport(parsed.transport),
-    pid: readPositiveInteger(parsed.pid) ?? 0,
+    pid: isProcessPid(parsed.pid) ? parsed.pid : 0,
     version: readOptionalString(parsed.version),
     codeOrigin: readDaemonInfoCodeOrigin(parsed.codeOrigin),
     codeSignature: readOptionalString(parsed.codeSignature),

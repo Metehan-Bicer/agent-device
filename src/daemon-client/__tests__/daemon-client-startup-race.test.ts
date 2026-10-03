@@ -203,6 +203,46 @@ for (const exit of [
   });
 }
 
+test('a joined busy contender waits for a published winner to become ready without signaling it', async (t) => {
+  if (!(await supportsLoopbackBind())) return t.skip('loopback unavailable');
+  const paths = resolveDaemonPaths(mkdtempForTestSync('daemon-start-delayed-ready-'));
+  let probes = 0;
+  const http = await startHttpDaemonFixture({ devices: [] }, { ready: () => ++probes >= 12 });
+  const deferred = path.join(paths.baseDir, 'defer-publication');
+  fs.writeFileSync(deferred, 'wait');
+  const winner = spawnRegisteredDaemonFixture(paths, fields(http.port), { stdio: 'ignore' });
+  await awaitFile(path.join(paths.baseDir, 'registration-held'));
+  let joined = false;
+  spawn.mockImplementation((_command, _args, options) => {
+    const child = spawnRegisteredDaemonFixture(paths, fields(http.port), options);
+    void child.exited.then((exit) => {
+      assert.equal(exit.exitCode, DAEMON_STARTUP_EXIT_CODES.busy);
+      joined = true;
+    });
+    return child;
+  });
+  pause.mockImplementation(async () => {
+    if (joined) fs.rmSync(deferred, { force: true });
+    await actualRetry.sleep(10);
+  });
+  const signal = vi.spyOn(process, 'kill');
+  try {
+    assert.equal((await sendToDaemon(request(paths))).ok, true);
+    assert.equal(joined, true);
+    assert.ok(probes >= 12);
+    assert.equal(spawn.mock.calls.length, 1);
+    assert.equal(http.rpcRequests.length, 1);
+    assert.equal(isProcessAlive(winner.pid), true);
+    assert.equal(
+      signal.mock.calls.some(([pid, kind]) => pid === winner.pid && kind !== 0),
+      false,
+    );
+  } finally {
+    signal.mockRestore();
+    await closeLoopbackServer(http.server);
+  }
+});
+
 for (const held of [true, false]) {
   test(`startup uses one deadline when the claim is ${held ? 'held' : 'released for relaunch'}`, async () => {
     const paths = resolveDaemonPaths(mkdtempForTestSync('daemon-start-budget-'));
@@ -295,7 +335,14 @@ test.for([
   const notice = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
     const pending = sendToDaemon(request(paths));
-    if (expected.alive) await assert.rejects(pending);
+    if (expected.alive)
+      await assert.rejects(pending, (error: unknown) => {
+        assert.ok(error instanceof AppError);
+        assert.equal(error.details?.kind, 'daemon_startup_failed');
+        assert.equal(error.details?.startupAttempts, 1);
+        assert.equal(error.details?.startupTimeoutMs, 15_000);
+        return true;
+      });
     else {
       assert.equal((await pending).ok, true);
       await winner.exited;

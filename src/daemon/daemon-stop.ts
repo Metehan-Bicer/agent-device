@@ -1,5 +1,5 @@
 import { AppError } from '@agent-device/kernel/errors';
-import { stopAndRetireDaemon, type DaemonRetirementResult } from '../daemon-registration-owner.ts';
+import type { DaemonRetirementResult } from '../daemon-registration-owner.ts';
 import type { OwnerIdentity } from '@agent-device/host-kit/process';
 
 import type { DaemonPaths } from '../daemon-resolution.ts';
@@ -43,6 +43,7 @@ export async function stopDaemon(params: {
 }): Promise<DaemonStopResult> {
   const info = readRegisteredDaemonIdentity(params.paths.infoPath);
   if (!info) return notRunningResult();
+  const { stopAndRetireDaemon } = await import('../daemon-registration-owner.ts');
   const retirement = await stopAndRetireDaemon({
     paths: params.paths,
     observed: info,

@@ -73,10 +73,7 @@ export async function handleRequestTimeout(
       mode: 'force',
     });
   }
-  const forcedKill =
-    retirement?.status !== 'absent' &&
-    retirement?.termination?.status === 'exited' &&
-    retirement.termination.mode === 'forced';
+  const retained = retirement?.status === 'retained';
   // The HINT, unlike cleanup, may only name Apple-runner involvement on
   // evidence this call site actually has: an explicitly declared Apple
   // platform selector, or the cleanup itself having terminated a matching
@@ -95,9 +92,9 @@ export async function handleRequestTimeout(
       timedOutRunnerPidsTerminated: cleanup.terminated,
       timedOutRunnerCleanupError: cleanup.error,
       daemonPidReset: retirement?.status === 'retired' ? info.pid : undefined,
-      daemonPidForceKilled: resetDaemon ? forcedKill : undefined,
+      daemonPidForceKilled: resetDaemon ? daemonWasForceKilled(retirement) : undefined,
       daemonRetirement: retirement,
-      daemonPreservedAfterTimeout: !remote && !resetDaemon,
+      daemonPreservedAfterTimeout: retained || (!remote && !resetDaemon),
       daemonBaseUrl: info.baseUrl,
     },
   });
@@ -118,6 +115,12 @@ export async function handleRequestTimeout(
             action,
           }),
   });
+}
+
+function daemonWasForceKilled(retirement: DaemonRetirementResult | undefined): boolean {
+  if (!retirement || retirement.status === 'absent') return false;
+  const termination = retirement.termination;
+  return termination?.status === 'exited' && termination.mode === 'forced';
 }
 
 // Whether a timed-out request tears down the local daemon is declared on the

@@ -41,14 +41,16 @@ vi.mock('@agent-device/host-kit/command', async () => {
 
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import { sleep } from '@agent-device/host-kit/retry';
+import { withDiagnosticsScope } from '@agent-device/host-kit/diagnostics';
 import { sendRequest } from '../daemon-client-transport.ts';
 import type { DaemonRequest } from '../../daemon/daemon-request.ts';
-import { readDaemonInfo, type DaemonInfo } from '../daemon-client-metadata.ts';
+import type { DaemonInfo } from '../daemon-client-metadata.ts';
 import { resolveDaemonPaths, type DaemonPaths } from '../../daemon-resolution.ts';
 import type { DaemonRetirementResult } from '../../daemon-registration-owner.ts';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 import {
   spawnRegisteredDaemonFixture,
+  waitForRegisteredDaemonFixture,
   finishRegisteredDaemonFixture,
   finishRegisteredDaemonFixtures,
 } from '../../__tests__/test-utils/registered-daemon-fixture.ts';
@@ -284,13 +286,29 @@ test('remote HTTP timeout never runs the Apple pkill cleanup and uses the remote
   assert.equal(mockRunCmdSync.mock.calls.length, 0);
 });
 
-async function publishedInfo(paths: DaemonPaths): Promise<DaemonInfo> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const info = readDaemonInfo(paths.infoPath);
-    if (info) return info;
-    await sleep(10);
+async function waitForForceStop(requested: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      requested,
+      new Promise<void>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('force stop was not requested')), 1_500);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
-  throw new Error('registered child did not publish');
+}
+
+function timeoutDiagnostic(paths: DaemonPaths): Record<string, unknown> {
+  const events = fs
+    .readFileSync(path.join(paths.baseDir, 'timeout-diagnostics.ndjson'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const event = events.find((entry) => entry.phase === 'daemon_request_timeout');
+  assert.ok(event);
+  return event.data;
 }
 
 for (const transport of ['socket', 'http'] as const) {
@@ -331,13 +349,17 @@ for (const transport of ['socket', 'http'] as const) {
       return actualKill(pid, signal);
     });
     try {
-      const info = await publishedInfo(paths);
-      outcome = sendRequest(
-        info,
-        { ...buildRequest(undefined), command: 'open' },
-        transport,
-        paths,
-        TIMEOUT_MS,
+      const info = await waitForRegisteredDaemonFixture(paths, child);
+      outcome = withDiagnosticsScope(
+        { debug: true, logPath: path.join(paths.baseDir, 'timeout-diagnostics.ndjson') },
+        () =>
+          sendRequest(
+            info,
+            { ...buildRequest(undefined), command: 'open' },
+            transport,
+            paths,
+            TIMEOUT_MS,
+          ),
       ).then(
         () => assert.fail('hanging request unexpectedly succeeded'),
         (error: unknown) => {
@@ -345,10 +367,7 @@ for (const transport of ['socket', 'http'] as const) {
           return error;
         },
       );
-      await Promise.race([
-        requested,
-        sleep(1_500).then(() => assert.fail('force stop was not requested')),
-      ]);
+      await waitForForceStop(requested);
       await sleep(30);
       assert.equal(actualKill(child.pid, 0), true);
       assert.equal(settled, false, 'request must remain pending while the daemon is alive');
@@ -364,6 +383,7 @@ for (const transport of ['socket', 'http'] as const) {
       assert.equal(fs.existsSync(paths.infoPath), false);
       assert.equal(fs.existsSync(paths.lockPath), false);
       assert.equal(fs.existsSync(paths.baseDir), true);
+      assert.equal(timeoutDiagnostic(paths).daemonPreservedAfterTimeout, false);
       assert.equal(mockRunCmdSync.mock.calls.filter(([cmd]) => cmd === 'pkill').length, 3);
     } finally {
       kill.mockRestore();
@@ -394,18 +414,22 @@ test('timeout retains a live registration without captured birth proof and repor
   );
   const kill = vi.spyOn(process, 'kill');
   try {
-    const info = await publishedInfo(paths);
+    const info = await waitForRegisteredDaemonFixture(paths, child);
     const before = fs.readFileSync(paths.infoPath, 'utf8');
     const lockBefore = fs
       .readdirSync(paths.lockPath)
       .map((name) => [name, fs.readFileSync(path.join(paths.lockPath, name), 'utf8')]);
     await assert.rejects(
-      sendRequest(
-        { ...info, processStartTime: undefined },
-        { ...buildRequest(undefined), command: 'open' },
-        'http',
-        paths,
-        TIMEOUT_MS,
+      withDiagnosticsScope(
+        { debug: true, logPath: path.join(paths.baseDir, 'timeout-diagnostics.ndjson') },
+        () =>
+          sendRequest(
+            { ...info, processStartTime: undefined },
+            { ...buildRequest(undefined), command: 'open' },
+            'http',
+            paths,
+            TIMEOUT_MS,
+          ),
       ),
       (error: unknown) => {
         assert.ok(error instanceof AppError);
@@ -419,6 +443,7 @@ test('timeout retains a live registration without captured birth proof and repor
         return true;
       },
     );
+    assert.equal(timeoutDiagnostic(paths).daemonPreservedAfterTimeout, true);
     assert.equal(process.kill(child.pid, 0), true);
     assert.equal(fs.readFileSync(paths.infoPath, 'utf8'), before);
     assert.deepEqual(

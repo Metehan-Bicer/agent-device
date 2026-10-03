@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { vi } from 'vitest';
-import type { runCmdDetachedMonitored } from '@agent-device/host-kit/command';
+import type { runCmdDetachedMonitored, ExecDetachedExit } from '@agent-device/host-kit/command';
+import { readDaemonInfo, type DaemonInfo } from '../../daemon-client/daemon-client-metadata.ts';
 import { readProcessStartTime } from '@agent-device/host-kit/process';
 import { stopDaemonProcess } from '../../daemon-process.ts';
 import type { DaemonPaths } from '../../daemon-resolution.ts';
@@ -74,6 +75,24 @@ export function spawnRegisteredDaemonFixture(
   owned.push({ launch: child, startTime: readProcessStartTime(child.pid) });
   children.set(paths.baseDir, owned);
   return child;
+}
+
+export async function waitForRegisteredDaemonFixture(
+  paths: DaemonPaths,
+  child: ReturnType<typeof runCmdDetachedMonitored>,
+): Promise<DaemonInfo> {
+  let exit: ExecDetachedExit | undefined;
+  void child.exited.then((result) => {
+    exit = result;
+  });
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (exit)
+      throw new Error(`Registered child exited before publication: ${JSON.stringify(exit)}`);
+    const info = readDaemonInfo(paths.infoPath);
+    if (info?.pid === child.pid) return info;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Registered child ${child.pid} did not publish ${paths.infoPath} within 4s`);
 }
 
 export async function finishRegisteredDaemonFixture(stateDir: string): Promise<void> {

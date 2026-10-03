@@ -8,6 +8,7 @@ import { afterEach, test, vi } from 'vitest';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 import {
   spawnRegisteredDaemonFixture,
+  waitForRegisteredDaemonFixture,
   finishRegisteredDaemonFixture,
   finishRegisteredDaemonFixtures,
 } from '../../__tests__/test-utils/registered-daemon-fixture.ts';
@@ -27,7 +28,6 @@ import { resolveDaemonPaths, type DaemonPaths } from '../../daemon-resolution.ts
 import { sendToDaemon, type DaemonRequest, type DaemonResponse } from '../daemon-client.ts';
 import { attachActiveSessionAddressHint } from '../daemon-client-lifecycle.ts';
 import { sendRequest } from '../daemon-client-transport.ts';
-import { readDaemonInfo } from '../daemon-client-metadata.ts';
 import type { DaemonRetirementResult } from '../../daemon-registration-owner.ts';
 import {
   closeLoopbackServer,
@@ -646,12 +646,7 @@ test('sendRequest timeout cleanup uses resolved daemon paths instead of request 
   };
 
   try {
-    let info = readDaemonInfo(daemonPaths.infoPath);
-    for (let attempt = 0; !info && attempt < 200; attempt += 1) {
-      await actualRetry.sleep(10);
-      info = readDaemonInfo(daemonPaths.infoPath);
-    }
-    assert.ok(info);
+    const info = await waitForRegisteredDaemonFixture(daemonPaths, child);
     let thrown: unknown;
     try {
       await sendRequest(info, request, 'http', daemonPaths, 50);
