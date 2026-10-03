@@ -754,6 +754,7 @@ export async function startDaemonRuntime(
     sessionIdleExpiry.cancel();
     if (shuttingDown) return;
     shuttingDown = true;
+    sessionStore.closeAdmission();
     stopMetadataLossWatch();
     if (shutdownOptions.cause) {
       await emitFatalDiagnostic(shutdownOptions.cause);
