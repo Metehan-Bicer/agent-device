@@ -523,7 +523,7 @@ function surfaceUnrecoveredRepairCommitFailure(
  * `resume.allowed` (plan-resumability): a held divergence with `allowed: false`
  * still holds the session so the agent can inspect and `close` cleanly.
  */
-export function isHeldRepairDivergence(response: DaemonResponse | undefined): boolean {
+function isHeldRepairDivergence(response: DaemonResponse | undefined): boolean {
   if (!response || response.ok) return false;
   if (response.error.code !== 'REPLAY_DIVERGENCE') return false;
   const resume = readReplayDivergenceResume(response.error.details?.divergence);
@@ -538,7 +538,7 @@ export function isHeldRepairDivergence(response: DaemonResponse | undefined): bo
  * selector-miss's own guidance) so the agent's next command knows to target
  * the SAME daemon instead of resolving to the default one.
  */
-export function attachRepairSessionAddressHint(
+function attachRepairSessionAddressHint(
   response: Extract<DaemonResponse, { ok: false }>,
   stateDir: string,
 ): Extract<DaemonResponse, { ok: false }> {
@@ -570,7 +570,7 @@ function isOneShotReplayCommand(command: string | undefined): boolean {
  * anyway, but the explicit command check keeps that carve-out a decision
  * rather than an accident of the response shape.
  */
-export function isActiveReplaySessionResponse(
+function isActiveReplaySessionResponse(
   req: Omit<DaemonRequest, 'token'>,
   response: DaemonResponse | undefined,
 ): boolean {
@@ -755,4 +755,22 @@ function isLoopbackHostname(hostname: string): boolean {
   if (net.isIPv4(normalized)) return LOOPBACK_BLOCK_LIST.check(normalized, 'ipv4');
   if (net.isIPv6(normalized)) return LOOPBACK_BLOCK_LIST.check(normalized, 'ipv6');
   return false;
+}
+
+export function attachSessionAddressHints(
+  response: DaemonResponse,
+  req: Omit<DaemonRequest, 'token'>,
+  settings: DaemonClientSettings,
+): DaemonResponse {
+  if (!response.ok) {
+    return settings.ownedStateDir && isHeldRepairDivergence(response)
+      ? attachRepairSessionAddressHint(response, settings.paths.baseDir)
+      : response;
+  }
+  return isActiveReplaySessionResponse(req, response)
+    ? attachActiveSessionAddressHint(
+        response,
+        settings.ownedStateDir ? settings.paths.baseDir : undefined,
+      )
+    : response;
 }
