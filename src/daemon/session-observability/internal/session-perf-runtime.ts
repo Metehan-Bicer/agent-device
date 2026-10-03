@@ -31,7 +31,8 @@ import type {
 } from '../../request-runtime-binding.ts';
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
+import type { SessionRef, SessionState } from '../../session-state.ts';
+import { bindSessionPerfCapture } from '../../perf-capture-session-binding.ts';
 import { recordSessionAction } from '../../session-action-recorder.ts';
 import {
   admitRuntimePlan,
@@ -55,10 +56,12 @@ export type PerfRuntimeHandlerParams = Readonly<{
 export async function handlePerfRuntimeCommand(
   params: PerfRuntimeHandlerParams,
 ): Promise<DaemonResponse> {
-  const session = params.sessionStore.get(params.sessionName);
-  if (!session) {
+  const ref = params.sessionStore.lookup(params.sessionName);
+  if (!ref) {
     return errorResponse('SESSION_NOT_FOUND', 'perf requires an active session. Run open first.');
   }
+  const session = params.sessionStore.requireCurrent(ref);
+  const bound = { ...params, ref };
   try {
     if (isRemovedAggregatePerfToken(params.req.positionals?.[0])) {
       throw new AppError('INVALID_ARGS', PERF_AGGREGATE_REMOVED_ERROR_MESSAGE);
@@ -89,7 +92,7 @@ export async function handlePerfRuntimeCommand(
     }
     return recordSuccessfulPerfResponse(
       params,
-      await executeAdmittedPerfPlan(params, session, admitted),
+      await executeAdmittedPerfPlan(bound, session, admitted),
     );
   } catch (error) {
     return { ok: false, error: normalizeError(error) };
@@ -116,7 +119,7 @@ function recordSuccessfulPerfResponse(
 // the admission/runtime join this handler is meant to keep singular.
 // fallow-ignore-next-line complexity
 async function executeAdmittedPerfPlan(
-  params: PerfRuntimeHandlerParams,
+  params: PerfRuntimeHandlerParams & { ref: SessionRef },
   session: SessionState,
   admission: AdmittedRuntimePlan<Exclude<PerfRuntimePlan, { kind: 'capture-stop' }>>,
 ): Promise<DaemonResponse> {
@@ -183,7 +186,7 @@ async function executeAdmittedPerfPlan(
 }
 
 async function startPerfCapture(
-  params: PerfRuntimeHandlerParams,
+  params: PerfRuntimeHandlerParams & { ref: SessionRef },
   session: SessionState,
   runtime: Readonly<{
     owner: Parameters<typeof adoptStartedPerfCapture>[0]['owner'];
@@ -225,9 +228,7 @@ async function startPerfCapture(
   });
   await adoptStartedPerfCapture({
     admissionLedger: requirePerfCaptureAdmissionLedger(params),
-    session,
-    sessionName: params.sessionName,
-    sessionStore: params.sessionStore,
+    binding: bindSessionPerfCapture(params.sessionStore, params.ref),
     device: session.device,
     owner: runtime.owner,
     fence,

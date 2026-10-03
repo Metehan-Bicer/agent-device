@@ -13,7 +13,6 @@ import {
   createDurableCaptureResourceStore,
   finishLiveDurableCapture,
   type DurableCaptureResourceDefinition,
-  type DurableCaptureSessionStore,
 } from '@agent-device/capture-kit/durable-capture';
 import { mkdtempForTestSync } from '../__tests__/test-utils/tmp-dir.ts';
 import { androidRecordingDevice, recordingHost, recordingInput } from './fixtures.ts';
@@ -150,20 +149,36 @@ async function adoptAndroidRecording(params: {
   };
   const sessionsDir = mkdtempForTestSync('agent-device-android-failed-finish-session-');
   let session: AndroidRecordingSession = {};
-  const sessionStore: DurableCaptureSessionStore<AndroidRecordingSession> = {
-    set: (_name, next) => {
+  const sessionStore = {
+    get: () => session,
+    set: (_name: string, next: AndroidRecordingSession) => {
       session = next;
     },
-    resolveSessionDir: (name) => path.join(sessionsDir, name),
+    resolveSessionDir: (name: string) => path.join(sessionsDir, name),
   };
-  const resourcePath = store.resolvePath(sessionStore.resolveSessionDir(params.sessionName));
+  const binding = {
+    address: params.sessionName,
+    sessionDir: sessionStore.resolveSessionDir(params.sessionName),
+    read: () => session.recording,
+    assertAdoptable: () => {
+      if (session.recording) throw new Error('Already recording');
+    },
+    canPersist: () => !session.recording,
+    adopt: (recording: AndroidRecordingSession['recording']) => {
+      session = { ...session, recording };
+    },
+    clear: (expected: NonNullable<AndroidRecordingSession['recording']>) => {
+      if (session.recording?.handle !== expected.handle) return 'resource-changed' as const;
+      session = { ...session, recording: undefined };
+      return 'cleared' as const;
+    },
+  };
+  const resourcePath = store.resolvePath(binding.sessionDir);
   await adoptStartedDurableCapture(
     definition,
     {
       reportUndurableCleanup: () => {},
-      session,
-      sessionName: params.sessionName,
-      sessionStore,
+      binding,
       device: androidRecordingDevice,
       owner: params.owner,
       fence: params.envelope.fence,

@@ -1,3 +1,4 @@
+import { bindSessionPerfCapture } from '../perf-capture-session-binding.ts';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { AppError } from '@agent-device/kernel/errors';
@@ -112,9 +113,7 @@ test('a perf stop whose pull failed re-collects the device-side trace the first 
   });
   await adoptStartedPerfCapture({
     admissionLedger: createPerfCaptureAdmissionLedger(),
-    session,
-    sessionName,
-    sessionStore,
+    binding: bindSessionPerfCapture(sessionStore, sessionStore.lookup(sessionName)!),
     device,
     owner: localRuntimeOwner('android'),
     fence,

@@ -73,19 +73,27 @@ export class SessionStore {
     this.acceptingSessions = false;
   }
 
-  publish(address: string, session: SessionState): SessionRef {
+  assertAdmissionOpen(address: string): void {
     if (!this.acceptingSessions) {
       throw new AppError('COMMAND_FAILED', 'Daemon is shutting down', {
         reason: 'daemon_shutting_down',
         session: address,
       });
     }
+  }
+
+  assertPublishable(address: string): void {
+    this.assertAdmissionOpen(address);
     if (this.sessions.has(address)) {
       throw new AppError('COMMAND_FAILED', 'Session address is already occupied', {
         reason: 'session_address_occupied',
         session: address,
       });
     }
+  }
+
+  publish(address: string, session: SessionState): SessionRef {
+    this.assertPublishable(address);
     const entry = { current: session };
     this.sessions.set(address, entry);
     this.clearIdleExpiryTombstone(address);

@@ -9,19 +9,26 @@ import type {
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { DurableCaptureResourceStore } from './store.ts';
 
-/**
- * The whole of the session store these mechanics touch: where a session's records live, and
- * how an updated session record is put back. The session type itself stays opaque — only a
- * definition's own `sessionSlot` looks inside it.
- */
-export type DurableCaptureSessionStore<S> = Readonly<{
-  set(name: string, session: S): void;
-  resolveSessionDir(name: string): string;
-}>;
-
 export type DurableCaptureSessionResource<K extends string, H extends AsyncDisposable> = Readonly<{
   handle: H;
   envelope: DurableResourceEnvelope<K>;
+}>;
+
+export type DurableCaptureSlotClearResult = 'cleared' | 'retired' | 'resource-changed';
+
+export type DurableCaptureSessionBinding<K extends string, H extends AsyncDisposable> = Readonly<{
+  address: string;
+  sessionDir: string;
+  read(): DurableCaptureSessionResource<K, H> | undefined;
+  assertAdoptable(): void;
+  canPersist(): boolean;
+  adopt(resource: DurableCaptureSessionResource<K, H>): void;
+  clear(expected: DurableCaptureSessionResource<K, H>): DurableCaptureSlotClearResult;
+}>;
+
+export type DurableCaptureSessionStore<S> = Readonly<{
+  set(name: string, session: S): void;
+  resolveSessionDir(name: string): string;
 }>;
 
 export type DurableCaptureSessionSlot<K extends string, H extends AsyncDisposable, S> = Readonly<{
@@ -86,11 +93,9 @@ export type DurableCaptureCleanupOutcome =
   | { confirmed: true }
   | { confirmed: false; reason: string };
 
-export type AdoptStartedDurableCaptureParams<K extends string, H extends AsyncDisposable, S> = {
+export type AdoptStartedDurableCaptureParams<K extends string, H extends AsyncDisposable> = {
   reportUndurableCleanup(device: DeviceInfo, outcome: DurableCaptureCleanupOutcome): void;
-  session: S;
-  sessionName: string;
-  sessionStore: DurableCaptureSessionStore<S>;
+  binding: DurableCaptureSessionBinding<K, H>;
   device: DeviceInfo;
   owner: RuntimeOwnerRef;
   fence: ResourceOwnershipFence;

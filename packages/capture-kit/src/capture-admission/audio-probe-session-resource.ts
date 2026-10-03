@@ -9,7 +9,10 @@ import type {
   RuntimeOwnerRef,
 } from '@agent-device/contracts/platform-runtime';
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import type { DurableCaptureSessionStore } from '../durable-capture/index.ts';
+import type {
+  DurableCaptureSessionBinding,
+  DurableCaptureSessionStore,
+} from '../durable-capture/index.ts';
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
 import type { DurableCaptureFinishIntent } from './durable-capture-resource.ts';
 import type { AudioProbeAdmissionLedger } from './audio-probe-admission-ledger.ts';
@@ -48,9 +51,7 @@ export const audioProbeDurableResource = createDurableCaptureResource<
 
 export function adoptStartedAudioProbe(params: {
   admissionLedger: AudioProbeAdmissionLedger;
-  session: DurableCaptureSessionState;
-  sessionName: string;
-  sessionStore: DurableCaptureSessionStore<DurableCaptureSessionState>;
+  binding: DurableCaptureSessionBinding<'audio-probe', AudioProbeLiveHandle>;
   device: DeviceInfo;
   owner: RuntimeOwnerRef;
   fence: ResourceOwnershipFence;

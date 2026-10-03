@@ -23,8 +23,8 @@ import type { DurableSessionResourceKind } from './durable-session-resource-kind
 
 export type { DurableCaptureFinishIntent, DurableSessionResourceKind };
 
-type AdoptStartedSessionCaptureParams<K extends string, H extends AsyncDisposable, S> = Omit<
-  AdoptStartedDurableCaptureParams<K, H, S>,
+type AdoptStartedSessionCaptureParams<K extends string, H extends AsyncDisposable> = Omit<
+  AdoptStartedDurableCaptureParams<K, H>,
   'reportUndurableCleanup'
 > &
   Readonly<{ admissionLedger: DurableCaptureAdmissionLedger }>;
@@ -48,7 +48,7 @@ export function createDurableCaptureResource<
   S,
 >(definition: DurableCaptureResourceDefinition<K, H, C, S>) {
   const sessionResourcePath = (
-    sessionStore: DurableCaptureSessionStore<S>,
+    sessionStore: Readonly<{ resolveSessionDir(name: string): string }>,
     sessionName: string,
   ): string => definition.store.resolvePath(sessionStore.resolveSessionDir(sessionName));
   const recoveryParams = (
@@ -70,7 +70,7 @@ export function createDurableCaptureResource<
     }): ResourceOwnershipFence {
       return createNextDurableCaptureFence(definition, params);
     },
-    adoptStarted(params: AdoptStartedSessionCaptureParams<K, H, S>): Promise<void> {
+    adoptStarted(params: AdoptStartedSessionCaptureParams<K, H>): Promise<void> {
       return adoptStartedDurableCapture(
         definition,
         {
@@ -80,7 +80,7 @@ export function createDurableCaptureResource<
             else params.admissionLedger.blockUndurableCleanup(device, outcome.reason);
           },
         },
-        sessionResourcePath(params.sessionStore, params.sessionName),
+        definition.store.resolvePath(params.binding.sessionDir),
       );
     },
     finishLive(params: {

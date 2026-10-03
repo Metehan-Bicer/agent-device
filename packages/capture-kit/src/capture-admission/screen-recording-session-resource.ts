@@ -16,6 +16,7 @@ import type { StopObservation } from '@agent-device/contracts/recording-stop-obs
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type {
   DurableCaptureRecoveryControl,
+  DurableCaptureSessionBinding,
   DurableCaptureSessionStore,
 } from '../durable-capture/index.ts';
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
@@ -50,9 +51,7 @@ export const screenRecordingDurableResource = createDurableCaptureResource<
 
 export function adoptStartedScreenRecording(params: {
   admissionLedger: ScreenRecordingAdmissionLedger;
-  session: DurableCaptureSessionState;
-  sessionName: string;
-  sessionStore: DurableCaptureSessionStore<DurableCaptureSessionState>;
+  binding: DurableCaptureSessionBinding<'screen-recording', ScreenRecordingLiveHandle>;
   device: DeviceInfo;
   owner: RuntimeOwnerRef;
   fence: ResourceOwnershipFence;

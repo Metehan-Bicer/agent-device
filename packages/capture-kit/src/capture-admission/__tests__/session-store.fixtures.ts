@@ -1,13 +1,13 @@
 import path from 'node:path';
 import { safeSessionName } from '@agent-device/host-kit/session-paths';
-import type { DurableCaptureSessionStore } from '../../durable-capture/index.ts';
 import { mkdtempForTestSync } from '../../tmp-dir.fixtures.ts';
 
-export type CaptureAdmissionSessionStore<S> = DurableCaptureSessionStore<S> &
-  Readonly<{
-    get(name: string): S | undefined;
-    sessionsDir: string;
-  }>;
+export type CaptureAdmissionSessionStore<S> = Readonly<{
+  set(name: string, session: S): void;
+  resolveSessionDir(name: string): string;
+  get(name: string): S | undefined;
+  sessionsDir: string;
+}>;
 
 /**
  * The whole of the daemon `SessionStore` these admission modules ever address — `set`,

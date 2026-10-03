@@ -1,3 +1,4 @@
+import { makeCaptureSessionBinding } from './session-binding.fixtures.ts';
 import path from 'node:path';
 import { vi, type Mock } from 'vitest';
 import {
@@ -15,7 +16,6 @@ import type {
   DurableCaptureFailedFinishPolicy,
   DurableCaptureResourceDefinition,
   DurableCaptureSessionResource,
-  DurableCaptureSessionStore,
 } from './definition.ts';
 import { createDurableCaptureResourceStore, type DurableCaptureResourceStore } from './store.ts';
 
@@ -91,8 +91,9 @@ export function makeDurableCaptureContext(
   const session: TestCaptureSession = { name: sessionName };
   sessions.set(sessionName, session);
   const resolveSessionDir = (name: string): string => path.join(sessionsDir, name);
-  const sessionStore: DurableCaptureSessionStore<TestCaptureSession> = {
-    set: (name, next) => void sessions.set(name, next),
+  const sessionStore = {
+    get: (name: string) => sessions.get(name),
+    set: (name: string, next: TestCaptureSession) => void sessions.set(name, next),
     resolveSessionDir,
   };
   const reportUndurableCleanup: Mock<
@@ -100,6 +101,11 @@ export function makeDurableCaptureContext(
   > = vi.fn();
   return {
     reportUndurableCleanup,
+    binding: makeCaptureSessionBinding(
+      sessionStore,
+      sessionName,
+      testCaptureDefinition.sessionSlot,
+    ),
     sessions,
     sessionsDir,
     resolveSessionDir,

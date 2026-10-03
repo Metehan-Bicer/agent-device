@@ -30,7 +30,11 @@ import { resolveSessionScope } from '../session-routing.ts';
 import type { SessionStore } from '../session-store.ts';
 import type { BindDeviceRuntime, BindExactDeviceRuntime } from '../request-runtime-binding.ts';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
-import type { SessionState } from '../session-state.ts';
+import type { SessionRef, SessionState } from '../session-state.ts';
+import {
+  bindRecordOnlyScreenRecording,
+  bindSessionScreenRecording,
+} from '../screen-recording-session-binding.ts';
 import { recordSessionAction } from '../session-action-recorder.ts';
 import {
   missingAppSessionResponse,
@@ -80,17 +84,19 @@ async function handleRecordCommandUnsafe(
   params: RecordRuntimeHandlerParams,
 ): Promise<DaemonResponse> {
   const { req, sessionName, sessionStore } = params;
-  const existingSession = sessionStore.get(sessionName);
+  const existingRef = sessionStore.lookup(sessionName);
+  const existingSession = existingRef?.session;
   const { plan, scope } = resolveRecordPlan(req, existingSession);
   if (plan.kind === 'start' && !isWholeScreenRecordingScope(scope) && !existingSession) {
     return missingAppSessionResponse(req);
   }
-  const resolvedSession = await resolveRecordingSession(params, existingSession);
+  const resolvedSession = await resolveRecordingSession(params, existingRef);
   const { session } = resolvedSession;
   if (plan.kind === 'start') {
     return await startRecording(
       params,
       session,
+      resolvedSession.ref,
       prepareRecordingRequest(req),
       plan.use,
       resolvedSession.needsReadiness,
@@ -113,17 +119,18 @@ function resolveRecordPlan(req: DaemonRequest, session: SessionState | undefined
 
 async function resolveRecordingSession(
   params: RecordRuntimeHandlerParams,
-  existing: SessionState | undefined,
-): Promise<Readonly<{ session: SessionState; needsReadiness: boolean }>> {
-  const device = existing?.device ?? (await resolveTargetDevice(params.req.flags ?? {}));
+  ref: SessionRef | undefined,
+): Promise<Readonly<{ session: SessionState; ref?: SessionRef; needsReadiness: boolean }>> {
+  const device = ref?.session.device ?? (await resolveTargetDevice(params.req.flags ?? {}));
   await params.retainDeviceExecutionLock(device.id);
-  if (existing) return { session: existing, needsReadiness: false };
+  if (ref) return { session: params.sessionStore.requireCurrent(ref), ref, needsReadiness: false };
   return { session: createRecordOnlySession(params, device), needsReadiness: true };
 }
 
 async function startRecording(
   params: RecordRuntimeHandlerParams,
   session: SessionState,
+  ref: SessionRef | undefined,
   prepared: ReturnType<typeof prepareRecordingRequest>,
   use: typeof screenRecordingStartUse,
   needsReadiness: boolean,
@@ -131,6 +138,11 @@ async function startRecording(
   if (session.screenRecording) {
     return { ok: false, error: { code: 'INVALID_ARGS', message: 'recording already in progress' } };
   }
+  const draft = ref
+    ? undefined
+    : bindRecordOnlyScreenRecording(params.sessionStore, params.sessionName, session);
+  const binding = ref ? bindSessionScreenRecording(params.sessionStore, ref) : draft!.binding;
+  binding.assertAdoptable();
   const admission = await params.bindDevice(session.device, screenRecordingAdmissionUse);
   if (needsReadiness) await ensureBoundDeviceReady(admission);
   const startFact = admission.facts.screenRecordingStart;
@@ -142,21 +154,20 @@ async function startRecording(
   );
   await adoptStartedScreenRecording({
     admissionLedger: params.admissionLedger,
-    session,
-    sessionName: params.sessionName,
-    sessionStore: params.sessionStore,
+    binding,
     device: session.device,
     owner: runtime.owner,
     fence,
     ...started,
     throwIfCanceled: params.throwIfCanceled,
   });
-  const adopted = params.sessionStore.get(params.sessionName)?.screenRecording;
+  const adoptedRef = ref ?? draft!.requireRef();
+  const adopted = binding.read();
   if (!adopted) throw new TypeError('Screen recording adoption did not publish a live handle');
   const snapshot = adopted.handle.inspect();
   recordSessionAction(
     params.sessionStore,
-    session,
+    params.sessionStore.requireCurrent(adoptedRef),
     params.req,
     params.req.command,
     buildRecordingStartedAction(snapshot),

@@ -20,7 +20,8 @@ import type {
 } from '../../request-runtime-binding.ts';
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
+import type { SessionRef, SessionState } from '../../session-state.ts';
+import { bindSessionAudioProbe } from '../../audio-probe-session-binding.ts';
 import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
 type AudioParams = {
@@ -44,7 +45,8 @@ export async function handleAudioCommand(params: AudioParams): Promise<DaemonRes
 async function handleAudioCommandUnsafe(params: AudioParams): Promise<DaemonResponse> {
   const sessionResult = resolveAudioSession(params);
   if (!sessionResult.ok) return sessionResult;
-  const session = sessionResult.session;
+  const ref = sessionResult.ref;
+  const session = params.sessionStore.requireCurrent(ref);
   const request = parseAudioProbeRequest(params.req.positionals);
   // Facts, not a capability bucket, decide which of the two owner paths this device has —
   // side-effect-free per ADR 0019 §9; the one bind below uses the plan's own use.
@@ -67,7 +69,7 @@ async function handleAudioCommandUnsafe(params: AudioParams): Promise<DaemonResp
       };
     }
     case 'capture-start':
-      return await startAudioProbe(params, session, request, plan.use);
+      return await startAudioProbe(params, ref, request, plan.use);
     case 'capture-status':
       return await audioProbeStatus(params, session);
     case 'capture-stop':
@@ -77,10 +79,10 @@ async function handleAudioCommandUnsafe(params: AudioParams): Promise<DaemonResp
 
 function resolveAudioSession(
   params: AudioParams,
-): { ok: true; session: SessionState } | DaemonFailureResponse {
-  const session = params.sessionStore.get(params.sessionName);
-  if (!session) return errorResponse('SESSION_NOT_FOUND', 'audio requires an active session');
-  return { ok: true, session };
+): { ok: true; ref: SessionRef } | DaemonFailureResponse {
+  const ref = params.sessionStore.lookup(params.sessionName);
+  if (!ref) return errorResponse('SESSION_NOT_FOUND', 'audio requires an active session');
+  return { ok: true, ref };
 }
 
 function audioUnsupportedResponse(
@@ -99,10 +101,12 @@ function audioUnsupportedResponse(
 
 async function startAudioProbe(
   params: AudioParams,
-  session: SessionState,
+  ref: SessionRef,
   request: AudioProbeRequest,
   use: typeof audioProbeStartUse,
 ): Promise<DaemonResponse> {
+  let session = params.sessionStore.requireCurrent(ref);
+  const binding = bindSessionAudioProbe(params.sessionStore, ref);
   // Start restarts an already-running probe (legacy parity), completing it through the durable
   // coordinator so the previous envelope terminalizes before a new fence is minted. Nobody reads
   // that completion, so the previous probe is being handed back rather than captured.
@@ -110,12 +114,10 @@ async function startAudioProbe(
     await finishLiveAudioProbe({
       intent: 'disposal',
       session,
-      sessionName: params.sessionName,
+      sessionName: ref.address,
       sessionStore: params.sessionStore,
     });
-    const refreshed = params.sessionStore.get(params.sessionName);
-    if (!refreshed) return errorResponse('SESSION_NOT_FOUND', 'audio requires an active session');
-    session = refreshed;
+    session = params.sessionStore.requireCurrent(ref);
   }
   const runtime = await params.bindDevice(session.device, use);
   const resourcePath = audioProbeDurableResource.store.resolvePath(
@@ -139,16 +141,14 @@ async function startAudioProbe(
   });
   await adoptStartedAudioProbe({
     admissionLedger: params.audioProbeAdmissionLedger,
-    session,
-    sessionName: params.sessionName,
-    sessionStore: params.sessionStore,
+    binding,
     device: session.device,
     owner: runtime.owner,
     fence,
     ...started,
     throwIfCanceled: params.throwIfCanceled,
   });
-  const adopted = params.sessionStore.get(params.sessionName)?.audioProbe;
+  const adopted = binding.read();
   if (!adopted) throw new TypeError('Audio probe adoption did not publish a live handle');
   return { ok: true, data: await adopted.handle.status() };
 }

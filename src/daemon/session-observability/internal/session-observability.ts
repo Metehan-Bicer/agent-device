@@ -31,7 +31,7 @@ import type {
 } from '../../request-runtime-binding.ts';
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
+import type { SessionRef, SessionState } from '../../session-state.ts';
 import { handleAudioCommand } from './session-audio.ts';
 import { handlePerfRuntimeCommand } from './session-perf-runtime.ts';
 import { handleNetworkCommand } from './session-network.ts';
@@ -51,6 +51,7 @@ export type SessionObservabilityCommandInput = {
 type ObservabilityInput = SessionObservabilityCommandInput;
 type LogsHandlerParams = Omit<ObservabilityInput, 'bindDevice' | 'appLogAdmissionLedger'> & {
   session: SessionState;
+  ref: SessionRef;
   bindDevice: BindDeviceRuntime;
   appLogAdmissionLedger: AppLogAdmissionLedger;
 };
@@ -143,12 +144,13 @@ async function handleEventsCommand(params: ObservabilityInput): Promise<DaemonRe
 
 async function handleLogsCommand(params: ObservabilityInput): Promise<DaemonResponse> {
   const { req, sessionName, sessionStore } = params;
-  const session = sessionStore.get(sessionName);
-  if (!session) {
+  const ref = sessionStore.lookup(sessionName);
+  if (!ref) {
     return errorResponse('SESSION_NOT_FOUND', 'logs requires an active session');
   }
   try {
-    const logsParams = requireLogsHandlerParams({ ...params, session });
+    const session = sessionStore.requireCurrent(ref);
+    const logsParams = requireLogsHandlerParams({ ...params, session, ref });
     const admission = await logsParams.bindDevice(session.device, appLogAdmissionUse);
     const inspectFact = admission.facts.appLogInspect;
     if (!inspectFact.available) {
@@ -305,7 +307,7 @@ function handleLogsClear(params: LogsHandlerParams): DaemonResponse {
   }
   const logPath = sessionStore.resolveAppLogPath(sessionName);
   const cleared = clearAppLogFiles(logPath);
-  clearSessionAppLogFailure({ session, sessionName, sessionStore });
+  clearSessionAppLogFailure({ ref: params.ref, sessionStore });
   return { ok: true, data: cleared };
 }
 
@@ -386,10 +388,8 @@ async function startSessionAppLog(
     });
     await adoptStartedSessionAppLog({
       admissionLedger: params.appLogAdmissionLedger,
-      session,
-      sessionName,
+      ref: params.ref,
       sessionStore,
-      resourcePath,
       device: session.device,
       owner,
       fence,
@@ -400,8 +400,7 @@ async function startSessionAppLog(
     return { ok: true, data: { path: outputPath, started: true } };
   } catch (error) {
     const normalized = recordSessionAppLogFailure({
-      session,
-      sessionName,
+      ref: params.ref,
       sessionStore,
       error,
     });
@@ -431,7 +430,7 @@ function requireAudioSeams(params: ObservabilityInput): Parameters<typeof handle
 }
 
 function requireLogsHandlerParams(
-  params: ObservabilityInput & { session: SessionState },
+  params: ObservabilityInput & { session: SessionState; ref: SessionRef },
 ): LogsHandlerParams {
   if (!params.bindDevice) {
     throw new AppError('COMMAND_FAILED', 'Device runtime gateway is not configured', {

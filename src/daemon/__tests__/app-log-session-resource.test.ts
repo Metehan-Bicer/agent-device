@@ -88,7 +88,7 @@ test('SessionStore failure after transfer disposes the transferred handle and pr
   const context = makeContext();
   const runtime = makeStartResult(context);
   const primary = new Error('store adoption failed');
-  vi.spyOn(context.sessionStore, 'set').mockImplementationOnce(() => {
+  vi.spyOn(context.sessionStore, 'update').mockImplementationOnce(() => {
     throw primary;
   });
   await expect(
@@ -315,6 +315,77 @@ test('app-log disposes on a failed finish because its retry is that same finish 
   ).not.toThrow();
 });
 
+test('shutdown admission rejects a late start while its existing session still occupies the address', async () => {
+  const context = makeContext();
+  const runtime = makeStartResult(context);
+  context.sessionStore.closeAdmission();
+  await expect(
+    adoptStartedSessionAppLog({ ...context, ...runtime.result, throwIfCanceled: () => {} }),
+  ).rejects.toMatchObject({ details: { reason: 'daemon_shutting_down' } });
+  expect(runtime.forceCleanup).toHaveBeenCalledOnce();
+  expect(context.sessionStore.requireCurrent(context.ref).appLog).toBeUndefined();
+  expect(appLogResourceStore.read(context.resourcePath)).toMatchObject({
+    status: 'decoded',
+    envelope: { lifecycle: 'completed' },
+  });
+});
+
+test('failed adoption cannot terminalize successor evidence after its cleanup yields', async () => {
+  const context = makeContext();
+  const runtime = makeStartResult(context);
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cleaning = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  runtime.forceCleanup.mockImplementationOnce(async () => {
+    entered();
+    await held;
+    return { status: 'cleaned' };
+  });
+  const canceled = new AppError('CANCELED', 'canceled');
+  const adoption = adoptStartedSessionAppLog({
+    ...context,
+    ...runtime.result,
+    throwIfCanceled: () => {
+      throw canceled;
+    },
+  });
+  const rejected = expect(adoption).rejects.toBe(canceled);
+  await cleaning;
+  context.sessionStore.retire(context.ref);
+  const successor = context.sessionStore.publish(context.sessionName, { ...context.session });
+  appLogResourceStore.write(context.resourcePath, runtime.result.envelope);
+  release();
+  await rejected;
+  expect(context.sessionStore.requireCurrent(successor).appLog).toBeUndefined();
+  expect(appLogResourceStore.read(context.resourcePath)).toMatchObject({
+    status: 'decoded',
+    envelope: { lifecycle: 'open' },
+  });
+});
+
+test('late adoption disposes its pending handle without overwriting a successor manifest', async () => {
+  const context = makeContext();
+  const runtime = makeStartResult(context);
+  context.sessionStore.retire(context.ref);
+  const successor = context.sessionStore.publish(context.sessionName, { ...context.session });
+  const envelope = { ...runtime.result.envelope, fence: { token: 'successor', generation: 2 } };
+  appLogResourceStore.write(context.resourcePath, envelope);
+  await expect(
+    adoptStartedSessionAppLog({ ...context, ...runtime.result, throwIfCanceled: () => {} }),
+  ).rejects.toMatchObject({ details: { reason: 'session_lifetime_ended' } });
+  expect(runtime.forceCleanup).toHaveBeenCalledOnce();
+  expect(context.sessionStore.requireCurrent(successor).appLog).toBeUndefined();
+  expect(appLogResourceStore.read(context.resourcePath)).toMatchObject({
+    status: 'decoded',
+    envelope,
+  });
+});
+
 function makeContext(
   device: DeviceInfo = {
     platform: 'android',
@@ -335,6 +406,7 @@ function makeContext(
   const resourcePath = appLogResourceStore.resolvePath(sessionStore.resolveSessionDir(sessionName));
   return {
     admissionLedger: createAppLogAdmissionLedger(),
+    ref: sessionStore.lookup(sessionName)!,
     session,
     sessionName,
     sessionStore,
