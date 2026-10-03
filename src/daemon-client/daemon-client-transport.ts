@@ -72,23 +72,31 @@ type RemoteDaemonHealthLink = Pick<
 export async function canConnect(
   info: DaemonInfo,
   preference: DaemonTransportPreference,
+  probeTimeoutMs?: number,
 ): Promise<boolean> {
+  const deadline = Date.now() + (probeTimeoutMs ?? Number.POSITIVE_INFINITY);
   const transport = chooseTransport(info, preference);
-  if (await canConnectWithTransport(info, transport)) return true;
+  if (await canConnectWithTransport(info, transport, deadline - Date.now())) return true;
 
   const fallback = chooseAutoFallbackTransport(info, preference, transport);
-  return fallback ? await canConnectWithTransport(info, fallback) : false;
+  return fallback ? await canConnectWithTransport(info, fallback, deadline - Date.now()) : false;
 }
 
 async function canConnectWithTransport(
   info: DaemonInfo,
   transport: ResolvedDaemonTransport,
+  timeoutMs: number,
 ): Promise<boolean> {
-  return transport === 'http' ? await canConnectHttp(info) : await canConnectSocket(info.port);
+  return transport === 'http'
+    ? await canConnectHttp(info, timeoutMs)
+    : await canConnectSocket(info.port, timeoutMs);
 }
 
-export function canConnectSocket(port: number | undefined): Promise<boolean> {
-  if (!port) return Promise.resolve(false);
+export function canConnectSocket(
+  port: number | undefined,
+  timeoutMs = LOCAL_DAEMON_HEALTHCHECK_TIMEOUT_MS,
+): Promise<boolean> {
+  if (!port || timeoutMs <= 0) return Promise.resolve(false);
   return new Promise((resolve) => {
     let settled = false;
     const socket = net.createConnection({ host: '127.0.0.1', port }, () => {
@@ -100,7 +108,7 @@ export function canConnectSocket(port: number | undefined): Promise<boolean> {
       socket.destroy();
       resolve(reachable);
     };
-    socket.setTimeout(LOCAL_DAEMON_HEALTHCHECK_TIMEOUT_MS);
+    socket.setTimeout(Math.min(LOCAL_DAEMON_HEALTHCHECK_TIMEOUT_MS, Math.ceil(timeoutMs)));
     socket.on('timeout', () => {
       finish(false);
     });
@@ -110,8 +118,8 @@ export function canConnectSocket(port: number | undefined): Promise<boolean> {
   });
 }
 
-function canConnectHttp(info: DaemonInfo): Promise<boolean> {
-  return readDaemonHttpHealth(info).then((health) => health.reachable);
+function canConnectHttp(info: DaemonInfo, timeoutMs: number): Promise<boolean> {
+  return readDaemonHttpHealth(info, timeoutMs).then((health) => health.reachable);
 }
 
 export async function readRemoteDaemonHealth(

@@ -8,10 +8,11 @@ import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { isProcessAlive } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
-import { inspectProcessLock } from '@agent-device/host-kit/file';
+import { inspectProcessLock, type ProcessLockInspection } from '@agent-device/host-kit/file';
 
 import type { findUnrecoveredRepairCommitFailure } from '../session-repair-tombstone.ts';
 import {
+  DAEMON_STARTUP_EXIT_CODES,
   createOwnedReplayStateDir,
   recoverAbandonedDaemonRegistration,
   type DaemonRetirementResult,
@@ -36,14 +37,10 @@ import {
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 
 import {
-  cleanupStaleDaemonLockIfSafe,
   getDaemonMetadataState,
-  isDaemonLockHeldByAnotherDaemon,
   isRemoteDaemon,
   readDaemonInfo,
-  removeDaemonInfo,
   resolveDaemonStartupHint,
-  stopDaemonProcessForTakeover,
   type DaemonInfo,
 } from './daemon-client-metadata.ts';
 import {
@@ -69,7 +66,7 @@ export type EnsuredDaemon = {
 type DaemonStartupWaitResult =
   | { kind: 'ready'; daemon: EnsuredDaemon }
   | { kind: 'early_exit'; exit: ExecDetachedExit }
-  | { kind: 'timeout' };
+  | { kind: 'retry' | 'unproven' | 'timeout' };
 
 const DAEMON_STARTUP_TIMEOUT_MS = 15_000;
 const LIVE_DAEMON_PROBE_RETRIES = 3;
@@ -166,7 +163,6 @@ async function ensureLocalDaemon(settings: DaemonClientSettings): Promise<Ensure
   const reusable = await readReusableLocalDaemon(settings);
   if (reusable) return { info: reusable, startedByClient: false };
 
-  cleanupStaleDaemonLockIfSafe(settings.paths);
   return await startLocalDaemon(settings);
 }
 
@@ -190,23 +186,52 @@ async function ensureRemoteDaemon(settings: DaemonClientSettings): Promise<Ensur
   });
 }
 
-async function readReusableLocalDaemon(settings: DaemonClientSettings): Promise<DaemonInfo | null> {
+async function readReusableLocalDaemon(
+  settings: DaemonClientSettings,
+  deadline?: number,
+): Promise<DaemonInfo | null> {
+  const inspection = inspectProcessLock(settings.paths.lockPath);
+  if (inspection.state === 'unproven') {
+    throw new AppError('COMMAND_FAILED', 'Daemon registration ownership could not be verified.', {
+      reason: 'daemon_registration_unproven',
+      inspection,
+      stateDir: settings.paths.baseDir,
+      hint: resolveDaemonStartupHint(getDaemonMetadataState(settings.paths), settings.paths),
+    });
+  }
   const existing = readDaemonInfo(settings.paths.infoPath);
   if (!existing) return null;
 
   const decision = await resolveDaemonTakeover(existing, {
-    onClientTransport: () => canReachReusableDaemon(existing, settings.transportPreference),
-    onAnyAdvertisedTransport: () => canReachReusableDaemon(existing, 'auto'),
+    onClientTransport: () =>
+      canReachReusableDaemon(existing, settings.transportPreference, deadline),
+    onAnyAdvertisedTransport: () => canReachReusableDaemon(existing, 'auto', deadline),
   });
   if (decision.kind === 'reuse') return existing;
   if (decision.kind === 'refuseNewer') {
     throw newerDaemonRefusedError(existing, decision, settings.paths.baseDir);
   }
 
+  if (deadline !== undefined && Date.now() >= deadline) return null;
   emitDaemonTakeoverNotice(existing, decision.reason, settings.paths.baseDir);
-  await stopDaemonProcessForTakeover(existing);
-  removeDaemonInfo(settings.paths.infoPath);
+  await retireDaemonForTakeover(existing, settings.paths);
   return null;
+}
+
+async function retireDaemonForTakeover(existing: DaemonInfo, paths: DaemonPaths): Promise<void> {
+  const retirement = await stopAndRetireDaemon({
+    paths: paths,
+    observed: { pid: existing.pid, startTime: existing.processStartTime ?? null },
+    mode: 'graceful',
+  });
+  if (retirement.status === 'retained') {
+    throw new AppError('COMMAND_FAILED', 'Daemon replacement could not be confirmed.', {
+      reason: 'daemon_retirement_unconfirmed',
+      retirement,
+      hint:
+        retirement.error?.hint ?? resolveDaemonStartupHint(getDaemonMetadataState(paths), paths),
+    });
+  }
 }
 
 /**
@@ -220,12 +245,14 @@ async function readReusableLocalDaemon(settings: DaemonClientSettings): Promise<
 async function canReachReusableDaemon(
   info: DaemonInfo,
   preference: DaemonTransportPreference,
+  deadline?: number,
 ): Promise<boolean> {
-  if (await canConnectReusableDaemon(info, preference)) return true;
+  if (await canConnectReusableDaemon(info, preference, deadline)) return true;
   for (let retry = 1; retry <= LIVE_DAEMON_PROBE_RETRIES; retry += 1) {
-    if (!isProcessAlive(info.pid)) return false;
-    await sleep(LIVE_DAEMON_PROBE_RETRY_DELAY_MS);
-    if (await canConnectReusableDaemon(info, preference)) {
+    if (!isProcessAlive(info.pid) || (deadline !== undefined && Date.now() >= deadline))
+      return false;
+    await sleep(Math.min(LIVE_DAEMON_PROBE_RETRY_DELAY_MS, remainingStartupBudget(deadline)));
+    if (await canConnectReusableDaemon(info, preference, deadline)) {
       emitDiagnostic({
         level: 'warn',
         phase: 'daemon_probe_recovered',
@@ -261,9 +288,10 @@ async function assertDaemonPolicyMatches(existing: DaemonInfo, stateDir: string)
 async function canConnectReusableDaemon(
   info: DaemonInfo,
   preference: DaemonTransportPreference,
+  deadline?: number,
 ): Promise<boolean> {
   try {
-    return await canConnect(info, preference);
+    return await canConnect(info, preference, remainingStartupBudget(deadline));
   } catch (error) {
     if (isDaemonTransportUnavailableError(error)) return false;
     throw error;
@@ -298,7 +326,7 @@ function emitDaemonTakeoverNotice(info: DaemonInfo, reason: string, stateDir: st
 }
 
 type FailedDaemonStartup = {
-  cleanup: DaemonRetirementResult;
+  cleanup?: DaemonRetirementResult;
   startError?: string;
   daemonProcess?: ExecDetachedExit | { pid: number };
   retry: boolean;
@@ -314,7 +342,7 @@ async function startLocalDaemon(settings: DaemonClientSettings): Promise<Ensured
     const result = await attemptLocalDaemonStartup(settings, deadline);
     if ('daemon' in result) return result.daemon;
     failure = result;
-    cleanupResults.push(result.cleanup);
+    if (result.cleanup) cleanupResults.push(result.cleanup);
     if (!result.retry) break;
     await sleep(Math.min(150, Math.max(0, deadline - Date.now())));
   }
@@ -356,26 +384,70 @@ async function attemptLocalDaemonStartup(
       retry: cleanup.status !== 'retained',
     };
   }
-  const startup = await waitForDaemonStartup(Math.max(0, deadline - Date.now()), settings, launch);
+  const startup = await waitForDaemonStartup(deadline, settings, launch);
   if (startup.kind === 'ready') return { daemon: startup.daemon };
+  if (startup.kind === 'retry') return { retry: true };
+  if (startup.kind === 'unproven') {
+    return {
+      retry: false,
+      startError: 'Daemon registration ownership could not be verified.',
+      daemonProcess: { pid: launch.pid },
+    };
+  }
+  const { cleanup, joined } = await retireStartupAttempt(settings, launch, deadline);
+  const available = isRegistrationAvailable(inspectProcessLock(settings.paths.lockPath));
+  return {
+    cleanup,
+    retry: joined && startup.kind === 'early_exit' && available,
+    startError: startup.kind === 'early_exit' ? describeDaemonEarlyExit(startup.exit) : undefined,
+    daemonProcess: startup.kind === 'early_exit' ? startup.exit : { pid: launch.pid },
+  };
+}
+
+async function retireStartupAttempt(
+  settings: DaemonClientSettings,
+  launch: DaemonStartupLaunch,
+  deadline: number,
+  ownedStateDir?: OwnedReplayStateDir,
+): Promise<{ cleanup: DaemonRetirementResult; joined: boolean }> {
   const cleanup = await stopAndRetireDaemon({
     paths: settings.paths,
     observed: { pid: launch.pid, startTime: launch.startTime ?? null },
     mode: 'graceful',
+    ownedStateDir,
+    termTimeoutMs: Math.min(3_000, remainingStartupBudget(deadline)),
+    killTimeoutMs: 1_000,
     lockTimeoutMs: 0,
   });
-  const inspection = inspectProcessLock(settings.paths.lockPath);
-  const available =
+  const joined = await joinStartup(launch);
+  return { cleanup, joined };
+}
+
+async function joinStartup(launch: DaemonStartupLaunch): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      launch.exited.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), 1_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function remainingStartupBudget(deadline?: number): number {
+  return deadline === undefined ? Number.POSITIVE_INFINITY : Math.max(0, deadline - Date.now());
+}
+
+function isRegistrationAvailable(inspection: ProcessLockInspection): boolean {
+  return (
     inspection.state === 'absent' ||
     (inspection.state === 'held' &&
       (inspection.liveness === 'owner-process-dead' ||
-        inspection.liveness === 'owner-process-reused'));
-  return {
-    cleanup,
-    retry: startup.kind === 'early_exit' && available,
-    startError: startup.kind === 'early_exit' ? describeDaemonEarlyExit(startup.exit) : undefined,
-    daemonProcess: startup.kind === 'early_exit' ? startup.exit : { pid: launch.pid },
-  };
+        inspection.liveness === 'owner-process-reused'))
+  );
 }
 
 /**
@@ -383,7 +455,7 @@ async function attemptLocalDaemonStartup(
  * (`replay --save-script`) that COMPLETES without diverging returns SUCCESS
  * here — the actual healed-script COMMIT is deferred to daemon teardown
  * (`finalizeRepairTeardown`, run inside the daemon process's own shutdown
- * handler, triggered by `stopDaemonProcessForTakeover` below). If that
+ * handler, triggered by `stopAndRetireDaemon`). If that
  * deferred commit then FAILS, the daemon leaves a `REPAIR_COMMIT_FAILED`
  * tombstone in this owned state dir — the only surviving record of the
  * failure, since the daemon process (and its in-memory session) is gone by
@@ -629,34 +701,91 @@ export function attachActiveSessionAddressHint(
 }
 
 async function waitForDaemonStartup(
-  timeoutMs: number,
+  deadline: number,
   settings: DaemonClientSettings,
   launch: DaemonStartupLaunch,
 ): Promise<DaemonStartupWaitResult> {
-  const start = Date.now();
   let earlyExit: ExecDetachedExit | undefined;
   void launch.exited.then((exit) => {
     earlyExit = exit;
   });
-
-  while (Date.now() - start < timeoutMs) {
-    const info = readDaemonInfo(settings.paths.infoPath);
-    if (info && (await canConnect(info, settings.transportPreference))) {
-      if (isLaunchedDaemon(info, launch)) {
-        return { kind: 'ready', daemon: { info, startedByClient: true } };
-      }
-      // Another client's daemon won the start: adopt it only as a reusable daemon would be. An
-      // incompatible one is replaced, and this wait then sees its own daemon's early exit.
-      const winner = await readReusableLocalDaemon(settings);
-      if (winner) return { kind: 'ready', daemon: { info: winner, startedByClient: false } };
+  while (Date.now() < deadline) {
+    if (earlyExit) {
+      const kind = classifyDaemonStartupExit(earlyExit);
+      if (kind === 'unproven') return { kind: 'unproven' };
+      if (kind === 'failed') return { kind: 'early_exit', exit: earlyExit };
+      const contender = await observeContendingDaemon(settings, deadline);
+      if (contender) return contender;
+    } else {
+      const info = await readReadyLaunchedDaemon(settings, launch, deadline);
+      if (info && !earlyExit) return { kind: 'ready', daemon: { info, startedByClient: true } };
     }
-    // A daemon that lost the startup lock exits cleanly; the daemon that won it is still starting.
-    if (earlyExit && !isDaemonLockHeldByAnotherDaemon(settings.paths, earlyExit.pid)) {
-      return { kind: 'early_exit', exit: earlyExit };
-    }
-    await sleep(100);
+    await sleep(Math.min(100, remainingStartupBudget(deadline)));
   }
   return { kind: 'timeout' };
+}
+
+function classifyDaemonStartupExit(exit: ExecDetachedExit): 'busy' | 'unproven' | 'failed' {
+  if (exit.error || exit.signal) return 'failed';
+  switch (exit.exitCode) {
+    case DAEMON_STARTUP_EXIT_CODES.busy:
+      return 'busy';
+    case DAEMON_STARTUP_EXIT_CODES.unproven:
+      return 'unproven';
+    default:
+      return 'failed';
+  }
+}
+
+async function observeContendingDaemon(
+  settings: DaemonClientSettings,
+  deadline: number,
+): Promise<DaemonStartupWaitResult | null> {
+  const winner = await readReusableLocalDaemon(settings, deadline);
+  if (Date.now() >= deadline) return null;
+  if (winner) return { kind: 'ready', daemon: { info: winner, startedByClient: false } };
+  const inspection = inspectProcessLock(settings.paths.lockPath);
+  if (inspection.state === 'unproven') return { kind: 'unproven' };
+  return isRegistrationAvailable(inspection) ? { kind: 'retry' } : null;
+}
+
+async function readReadyLaunchedDaemon(
+  settings: DaemonClientSettings,
+  launch: DaemonStartupLaunch,
+  deadline: number,
+): Promise<DaemonInfo | null> {
+  const info = readDaemonInfo(settings.paths.infoPath);
+  if (!info || !isLaunchedDaemon(info, launch)) return null;
+  try {
+    return (await canConnect(
+      info,
+      settings.transportPreference,
+      remainingStartupBudget(deadline),
+    )) && Date.now() < deadline
+      ? info
+      : null;
+  } catch (error) {
+    const { cleanup, joined } = await retireStartupAttempt(
+      settings,
+      launch,
+      deadline,
+      settings.ownedStateDir,
+    );
+    emitDiagnostic({
+      level: 'warn',
+      phase: 'daemon_startup_observation_failed',
+      data: { stateDir: settings.paths.baseDir, cleanup, joined, error: normalizeError(error) },
+    });
+    if (error instanceof AppError) {
+      error.details = {
+        ...error.details,
+        stateDir: settings.paths.baseDir,
+        cleanupResults: [cleanup],
+        startupJoined: joined,
+      };
+    }
+    throw error;
+  }
 }
 
 /** Whether `info` names the daemon process this client launched: same pid and start time. */

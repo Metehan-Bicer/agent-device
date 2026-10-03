@@ -39,6 +39,7 @@ import {
   currentDaemonCodeSignature,
 } from '../../__tests__/test-utils/daemon-http-fixture.ts';
 import { AppError } from '@agent-device/kernel/errors';
+import { tryAcquireProcessLock, inspectProcessLock } from '@agent-device/host-kit/file';
 import { runCmdDetachedMonitored, runCmdSync } from '@agent-device/host-kit/command';
 import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
 import { readProcessStartTime } from '@agent-device/host-kit/process';
@@ -208,14 +209,20 @@ async function startHangingHttpDaemonFixture(): Promise<HttpDaemonFixture> {
 }
 
 function installSpawnedHttpDaemon(paths: DaemonPaths, httpPort: number): void {
+  mockSleep.mockImplementation(actualRetry.sleep);
   mockRunCmdDetached.mockImplementation((_command, _args, options) => {
     assert.equal(options?.env?.AGENT_DEVICE_STATE_DIR, paths.baseDir);
-    writeDaemonInfo(paths, { httpPort, transport: 'http' });
-    writeDaemonLock(paths, {
-      pid: process.pid,
-      processStartTime: readProcessStartTime(process.pid) ?? undefined,
-    });
-    return { pid: process.pid, exited: new Promise(() => {}) };
+    return spawnRegisteredDaemonFixture(
+      paths,
+      {
+        httpPort,
+        token: 'local-secret',
+        version: readVersion(),
+        codeOrigin: 'checkout',
+        codeSignature: currentDaemonCodeSignature(),
+      },
+      options,
+    );
   });
 }
 
@@ -357,7 +364,7 @@ test('sendToDaemon retains unknown metadata after a spawn failure', async () => 
     assert.equal(results[0]?.removedInfo, false);
     assert.equal(attempts, 1);
   } finally {
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -402,11 +409,11 @@ test('sendToDaemon reports early daemon exit with log tail and startup paths', a
     assert.match(String(thrown.details?.daemonLogTail), /early daemon failure 2/);
     assert.equal(attempts, 2);
   } finally {
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
-test('sendToDaemon removes stale daemon lock before spawning a fresh daemon', async (t) => {
+test('daemon acquisition reclaims a proven reused owner before publication', async (t) => {
   if (!(await supportsLoopbackBind())) {
     t.skip('loopback listeners are not permitted in this environment');
     return;
@@ -416,10 +423,11 @@ test('sendToDaemon removes stale daemon lock before spawning a fresh daemon', as
   const paths = resolveDaemonPaths(stateDir);
   const daemon = await startHttpDaemonFixture({ via: 'fresh-daemon' });
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', stateDir);
-  writeDaemonLock(paths, {
-    pid: process.pid,
-    processStartTime: 'stale-start-time',
+  const stale = tryAcquireProcessLock({
+    lockDirPath: paths.lockPath,
+    owner: { pid: process.pid, startTime: 'stale-start-time', acquiredAtMs: Date.now() },
   });
+  assert.equal(stale.status, 'acquired');
   installSpawnedHttpDaemon(paths, daemon.port);
 
   try {
@@ -431,18 +439,15 @@ test('sendToDaemon removes stale daemon lock before spawning a fresh daemon', as
       meta: { requestId: 'req-stale-lock' },
     });
 
-    const freshLock = JSON.parse(fs.readFileSync(paths.lockPath, 'utf8')) as {
-      pid?: number;
-      processStartTime?: string;
-    };
+    const freshLock = inspectProcessLock(paths.lockPath);
     assert.deepEqual(response, { ok: true, data: { via: 'fresh-daemon' } });
     assert.equal(mockRunCmdDetached.mock.calls.length, 1);
-    assert.equal(freshLock.pid, process.pid);
-    assert.notEqual(freshLock.processStartTime, 'stale-start-time');
+    assert.equal(freshLock.state, 'held');
+    if (freshLock.state === 'held') assert.notEqual(freshLock.owner.startTime, 'stale-start-time');
     assert.deepEqual(daemon.seenPaths, ['GET /health', 'POST /rpc']);
   } finally {
     await closeLoopbackServer(daemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -510,7 +515,7 @@ test('sendToDaemon does not reuse reachable daemon metadata with mismatched vers
       stderrCapture.restore();
       await closeLoopbackServer(staleDaemon.server);
       await closeLoopbackServer(freshDaemon.server);
-      fs.rmSync(stateDir, { recursive: true, force: true });
+      await finishRegisteredDaemonFixture(stateDir);
       vi.unstubAllEnvs();
     }
   }
@@ -553,7 +558,7 @@ test('sendToDaemon prints a takeover notice before replacing an unreachable daem
   } finally {
     stderrCapture.restore();
     await closeLoopbackServer(freshDaemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -594,7 +599,7 @@ test('sendToDaemon replaces socket-only daemon metadata when HTTP transport is r
   } finally {
     stderrCapture.restore();
     await closeLoopbackServer(freshDaemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -697,7 +702,7 @@ test('sendToDaemon falls back from failed socket transport to HTTP using daemon 
   } finally {
     socketFailures.restore();
     await closeLoopbackServer(daemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -741,7 +746,7 @@ test('sendToDaemon does not replay over HTTP after the socket request is written
   } finally {
     socket.restore();
     await closeLoopbackServer(daemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 
@@ -1275,7 +1280,7 @@ test('issue #1384: sendToDaemon does not stop a client-started daemon at an expl
     assert.equal(fs.existsSync(paths.lockPath), true);
   } finally {
     await closeLoopbackServer(daemon.server);
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    await finishRegisteredDaemonFixture(stateDir);
   }
 });
 

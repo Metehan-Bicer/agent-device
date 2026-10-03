@@ -13,7 +13,7 @@ const actualCommand = await vi.importActual<typeof import('@agent-device/host-ki
 );
 const children = new Map<
   string,
-  { launch: ReturnType<typeof runCmdDetachedMonitored>; startTime: string | null }
+  Array<{ launch: ReturnType<typeof runCmdDetachedMonitored>; startTime: string | null }>
 >();
 
 /** A real registration owner, advertising the caller's HTTP fixture and joining before deletion. */
@@ -29,10 +29,10 @@ export function registeredDaemonFixtureArgs(
     entry,
     `import fs from 'node:fs';
 import path from 'node:path';
-import { tryAcquireDaemonRegistration } from ${JSON.stringify(registrationUrl)};
+import { DAEMON_STARTUP_EXIT_CODES, tryAcquireDaemonRegistration } from ${JSON.stringify(registrationUrl)};
 const paths = ${JSON.stringify(paths)};
 const acquired = await tryAcquireDaemonRegistration(paths);
-if (acquired.status !== 'acquired') process.exit(75);
+if (acquired.status !== 'acquired') process.exit(DAEMON_STARTUP_EXIT_CODES[acquired.status]);
 process.on('SIGTERM', async () => {
   const deferred = path.join(paths.baseDir, 'repair-on-shutdown.json');
   if (fs.existsSync(deferred)) {
@@ -43,6 +43,8 @@ process.on('SIGTERM', async () => {
   await acquired.owner.finish();
   process.exit(0);
 });
+fs.writeFileSync(path.join(paths.baseDir, 'registration-held'), 'ready');
+while (fs.existsSync(path.join(paths.baseDir, 'defer-publication'))) await new Promise(resolve => setTimeout(resolve, 10));
 acquired.owner.publish(${JSON.stringify(fields)});
 setInterval(() => {}, 1000);
 `,
@@ -60,13 +62,14 @@ export function spawnRegisteredDaemonFixture(
     registeredDaemonFixtureArgs(paths, fields),
     options,
   );
-  children.set(paths.baseDir, { launch: child, startTime: readProcessStartTime(child.pid) });
+  const owned = children.get(paths.baseDir) ?? [];
+  owned.push({ launch: child, startTime: readProcessStartTime(child.pid) });
+  children.set(paths.baseDir, owned);
   return child;
 }
 
 export async function finishRegisteredDaemonFixture(stateDir: string): Promise<void> {
-  const owned = children.get(stateDir);
-  if (owned) {
+  for (const owned of children.get(stateDir) ?? []) {
     const child = owned.launch;
     const termination = await stopDaemonProcess(
       { pid: child.pid, startTime: owned.startTime },
@@ -74,8 +77,8 @@ export async function finishRegisteredDaemonFixture(stateDir: string): Promise<v
     );
     assert.notEqual(termination.status, 'retained', JSON.stringify(termination));
     await child.exited;
-    children.delete(stateDir);
   }
+  children.delete(stateDir);
   fs.rmSync(stateDir, { recursive: true, force: true });
 }
 

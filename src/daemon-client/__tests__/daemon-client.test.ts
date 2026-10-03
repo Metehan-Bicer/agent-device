@@ -140,44 +140,20 @@ function writeCurrentDaemonInfo(
   );
 }
 
-test('resolveDaemonStartupHint prefers stale lock guidance when lock exists without info', () => {
-  const hint = resolveDaemonStartupHint({ hasInfo: false, hasLock: true });
-  assert.match(hint, /daemon\.lock/i);
-  assert.match(hint, /automatically/i);
-  assert.match(hint, /rm -f '.+daemon\.json' '.+daemon\.lock'/);
-});
-
-test('resolveDaemonStartupHint covers stale info+lock pair', () => {
-  const hint = resolveDaemonStartupHint({ hasInfo: true, hasLock: true });
-  assert.match(hint, /daemon\.json/i);
-  assert.match(hint, /daemon\.lock/i);
-  assert.match(hint, /rm -f '.+daemon\.json' '.+daemon\.lock'/);
-});
-
-test('resolveDaemonStartupHint falls back to daemon.json guidance', () => {
-  const hint = resolveDaemonStartupHint({ hasInfo: true, hasLock: false });
-  assert.match(hint, /daemon\.json/i);
-  assert.match(hint, /rm -f '.+daemon\.json' '.+daemon\.lock'/);
-});
-
-test('resolveDaemonStartupHint includes configured state directory paths', () => {
-  const paths = resolveDaemonPaths('/tmp/ad-custom-state');
-  const hint = resolveDaemonStartupHint({ hasInfo: false, hasLock: true }, paths);
-  assert.match(hint, /\/tmp\/ad-custom-state\/daemon\.lock/);
-  assert.match(hint, /\/tmp\/ad-custom-state\/daemon\.json/);
-  assert.match(
-    hint,
-    /rm -f '\/tmp\/ad-custom-state\/daemon\.json' '\/tmp\/ad-custom-state\/daemon\.lock'/,
-  );
-});
-
-test('resolveDaemonStartupHint shell-quotes cleanup paths', () => {
+test('startup recovery guidance retains configured paths and requires stopping every user', () => {
   const paths = resolveDaemonPaths("/tmp/ad custom's state");
-  const hint = resolveDaemonStartupHint({ hasInfo: true, hasLock: true }, paths);
-  assert.match(
-    hint,
-    /rm -f '\/tmp\/ad custom'\\''s state\/daemon\.json' '\/tmp\/ad custom'\\''s state\/daemon\.lock'/,
-  );
+  for (const state of [
+    { hasInfo: false, hasLock: true },
+    { hasInfo: true, hasLock: true },
+    { hasInfo: true, hasLock: false },
+    { hasInfo: false, hasLock: false },
+  ]) {
+    const hint = resolveDaemonStartupHint(state, paths);
+    if (state.hasInfo) assert.ok(hint.includes(paths.infoPath));
+    if (state.hasLock) assert.ok(hint.includes(paths.lockPath));
+    assert.match(hint, /stop all older clients and daemons/);
+    assert.doesNotMatch(hint, /rm -f/);
+  }
 });
 
 test('canConnectSocket times out stalled local daemon probes', async () => {

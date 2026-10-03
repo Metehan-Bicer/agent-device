@@ -1,11 +1,7 @@
 import fs from 'node:fs';
+import { inspectProcessLock, type ProcessLockInspection } from '@agent-device/host-kit/file';
 import { AppError } from '@agent-device/kernel/errors';
-import { shellQuote } from '@agent-device/kernel/device-shell';
-import {
-  isAgentDeviceDaemonProcess,
-  stopDaemonProcess,
-  type DaemonTerminationResult,
-} from '../daemon-process.ts';
+import { stopDaemonProcess, type DaemonTerminationResult } from '../daemon-process.ts';
 
 import type { DaemonCodeOrigin } from '@agent-device/host-kit/code-signature';
 
@@ -32,15 +28,10 @@ export type DaemonInfo = {
   remoteUpstreamInstanceId?: string;
 };
 
-type DaemonLockInfo = {
-  pid: number;
-  processStartTime?: string;
-  startedAt?: number;
-};
-
 export type DaemonMetadataState = {
   hasInfo: boolean;
   hasLock: boolean;
+  registration: ProcessLockInspection;
 };
 
 const DAEMON_TAKEOVER_TERM_TIMEOUT_MS = 3000;
@@ -96,35 +87,6 @@ function readPositiveInteger(value: unknown): number | undefined {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 
-function readDaemonLockInfo(lockPath: string): DaemonLockInfo | null {
-  const data = readJsonFile(lockPath);
-  if (!data || typeof data !== 'object') return null;
-  const parsed = data as Partial<DaemonLockInfo>;
-  const hasPid = Number.isInteger(parsed.pid) && Number(parsed.pid) > 0;
-  if (!hasPid) {
-    return null;
-  }
-  return {
-    pid: Number(parsed.pid),
-    processStartTime:
-      typeof parsed.processStartTime === 'string' ? parsed.processStartTime : undefined,
-    startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : undefined,
-  };
-}
-
-/**
- * Whether a live daemon other than `pid` holds the startup lock: another client's daemon won the
- * start, and the daemon at `pid` exited because it lost the lock.
- */
-export function isDaemonLockHeldByAnotherDaemon(paths: DaemonPaths, pid: number): boolean {
-  const lockInfo = readDaemonLockInfo(paths.lockPath);
-  return (
-    lockInfo !== null &&
-    lockInfo.pid !== pid &&
-    isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime)
-  );
-}
-
 export function removeDaemonInfo(infoPath: string): void {
   removeFileIfExists(infoPath);
 }
@@ -133,24 +95,11 @@ export function removeDaemonLock(lockPath: string): void {
   removeFileIfExists(lockPath);
 }
 
-export function cleanupStaleDaemonLockIfSafe(paths: DaemonPaths): void {
-  const state = getDaemonMetadataState(paths);
-  if (!state.hasLock || state.hasInfo) return;
-  const lockInfo = readDaemonLockInfo(paths.lockPath);
-  if (!lockInfo) {
-    removeDaemonLock(paths.lockPath);
-    return;
-  }
-  if (isAgentDeviceDaemonProcess(lockInfo.pid, lockInfo.processStartTime)) {
-    return;
-  }
-  removeDaemonLock(paths.lockPath);
-}
-
 export function getDaemonMetadataState(paths: DaemonPaths): DaemonMetadataState {
   return {
     hasInfo: fs.existsSync(paths.infoPath),
     hasLock: fs.existsSync(paths.lockPath),
+    registration: inspectProcessLock(paths.lockPath),
   };
 }
 
@@ -187,21 +136,10 @@ export function resolveDaemonStartupHint(
     process.env.AGENT_DEVICE_STATE_DIR,
   ),
 ): string {
-  const cleanupCommand = buildDaemonMetadataCleanupCommand(paths);
-  if (state.hasLock && !state.hasInfo) {
-    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.lockPath} still exists without ${paths.infoPath}. Retry with --debug; if this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
-  }
-  if (state.hasLock && state.hasInfo) {
-    return `agent-device attempted to clean stale daemon metadata automatically, but ${paths.infoPath} and ${paths.lockPath} still remain. Retry with --debug; if this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
-  }
-  if (state.hasInfo) {
-    return `agent-device did not observe reachable daemon metadata after retrying, and ${paths.infoPath} still remains. Stale metadata was cleaned automatically when safe; retry with --debug. If this persists after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
-  }
-  return `agent-device did not observe reachable daemon metadata after retrying. Stale metadata was cleaned automatically when safe; retry with --debug and check daemon diagnostics logs. If stale metadata returns after confirming no agent-device daemon process is running, run: ${cleanupCommand}`;
-}
-
-function buildDaemonMetadataCleanupCommand(paths: Pick<DaemonPaths, 'infoPath' | 'lockPath'>) {
-  return `rm -f ${shellQuote(paths.infoPath)} ${shellQuote(paths.lockPath)}`;
+  const artifacts = [state.hasInfo ? paths.infoPath : null, state.hasLock ? paths.lockPath : null]
+    .filter(Boolean)
+    .join(' and ');
+  return `Daemon startup did not establish a reachable owner. ${artifacts ? `State was retained at ${artifacts}. ` : ''}Retry with --debug and inspect daemon diagnostics. Before upgrading, stop all older clients and daemons with their original CLI and prevent them from returning to this state directory. Unverified lock state requires confirming every user stopped before manual recovery; deleting metadata alone is not a safe reset.`;
 }
 
 function readJsonFile(filePath: string): unknown | null {
