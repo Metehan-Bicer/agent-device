@@ -215,6 +215,7 @@ for (const held of [true, false]) {
     let now = Date.now();
     const started = now;
     let released = false;
+    let advanced = false;
     let finishPending: () => void = () => {};
     const nativeTimeout = globalThis.setTimeout;
     vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, ms, ...args) =>
@@ -231,9 +232,12 @@ for (const held of [true, false]) {
             }),
     }));
     pause.mockImplementation(async (ms) => {
-      if (!held && !released) {
-        await claim.acquisition.release();
-        released = true;
+      if (!advanced) {
+        if (!held) {
+          await claim.acquisition.release();
+          released = true;
+        }
+        advanced = true;
         now += 14_750;
       } else now += ms;
     });
