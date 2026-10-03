@@ -298,7 +298,7 @@ export async function buildTargetedTouchResponsePayloads(params: {
   const referenceFrame =
     result.kind === 'point'
       ? await resolveDirectTouchReferenceFrameSafely({
-          session,
+          ref: handlerParams.sessionRef!,
           flags: handlerParams.req.flags,
           sessionStore: handlerParams.sessionStore,
           contextFromFlags: handlerParams.contextFromFlags,

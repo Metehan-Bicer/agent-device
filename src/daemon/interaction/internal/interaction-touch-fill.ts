@@ -1,3 +1,4 @@
+import { bindInteractionSession } from './interaction-session.ts';
 import type { CommandFlags } from '@agent-device/contracts/command';
 import type { FillCommandResult, InteractionTarget } from '@agent-device/contracts/interaction';
 import { issueSettleRefs, resolveRefStalenessWarning } from '../../session-snapshot.ts';
@@ -48,6 +49,7 @@ type AdmittedFill = {
 };
 
 export async function dispatchFillViaRuntime(params: FillParams): Promise<DaemonResponse> {
+  params = bindInteractionSession(params);
   const admission = await admitFill(params);
   if ('response' in admission) return admission.response;
   const { session, parsedTarget, touchExecutor, staleRefsWarning } = admission.admitted;
