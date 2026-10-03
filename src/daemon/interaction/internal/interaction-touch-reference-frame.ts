@@ -18,7 +18,8 @@ async function resolveDirectTouchReferenceFrame(params: {
 }): Promise<GestureReferenceFrame | undefined> {
   const { ref, flags, sessionStore, contextFromFlags, captureSnapshotForSession, observation } =
     params;
-  const session = sessionStore.requireCurrent(ref);
+  const session = sessionStore.resolveCurrent(ref);
+  if (!session) return undefined;
   const recording = session.screenRecording?.handle;
   if (!recording) {
     return undefined;
@@ -68,13 +69,13 @@ export async function resolveDirectTouchReferenceFrameSafely(params: {
   try {
     return await resolveDirectTouchReferenceFrame(params);
   } catch (error) {
+    const current = params.sessionStore.resolveCurrent(params.ref);
+    if (!current) return undefined;
     emitDiagnostic({
       level: 'warn',
       phase: 'touch_reference_frame_resolve_failed',
       data: {
-        platform:
-          params.sessionStore.resolveCurrent(params.ref)?.device.platform ??
-          params.ref.session.device.platform,
+        platform: current.device.platform,
         error: error instanceof Error ? error.message : String(error),
       },
     });

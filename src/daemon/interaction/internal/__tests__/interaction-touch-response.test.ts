@@ -161,9 +161,14 @@ test.each([false, true])('selector-touch observation after retirement=%s', async
   }
 });
 
-test.each([false, true])(
-  'point-touch publication after a held frame probe, retired=%s',
-  async (retired) => {
+test.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  'point-touch publication after a held frame probe, retired=%s, fails=%s',
+  async (retired, fails) => {
     const sessionStore = makeSessionStore();
     const address = 'cwd:held-touch-response:default';
     const session = makeSession('default');
@@ -198,29 +203,38 @@ test.each([false, true])(
         },
       },
     };
-    const running = buildTargetedTouchResponsePayloads({
-      params: {
-        req: {
-          token: 't',
-          command: 'press',
-          positionals: ['10', '20'],
-          session: 'default',
-          flags: {},
-        },
-        sessionName: address,
-        sessionRef: ref,
-        sessionStore,
-        contextFromFlags,
-        captureSnapshotForSession: async () => {
-          startProbe();
-          await released;
-          return sessionStore.requireCurrent(ref).snapshot!;
-        },
+    const logPath = path.join(mkdtempForTestSync('held-point-'), 'request.log');
+    const running = withDiagnosticsScope(
+      { command: 'press', session: address, logPath, debug: true },
+      async () => {
+        const payloads = await buildTargetedTouchResponsePayloads({
+          params: {
+            req: {
+              token: 't',
+              command: 'press',
+              positionals: ['10', '20'],
+              session: 'default',
+              flags: {},
+            },
+            sessionName: address,
+            sessionRef: ref,
+            sessionStore,
+            contextFromFlags,
+            captureSnapshotForSession: async () => {
+              startProbe();
+              await released;
+              if (fails) throw new Error('frame capture failed');
+              return sessionStore.requireCurrent(ref).snapshot!;
+            },
+          },
+          result,
+          staleRefsWarning: undefined,
+          extra: {},
+        });
+        flushDiagnosticsToSessionFile({ force: true });
+        return payloads;
       },
-      result,
-      staleRefsWarning: undefined,
-      extra: {},
-    });
+    );
     await probing;
     let successor;
     if (retired) {
@@ -229,6 +243,8 @@ test.each([false, true])(
     }
     releaseProbe();
     const payloads = await running;
+    const diagnostics = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+    expect(diagnostics.includes('touch_reference_frame_resolve_failed')).toBe(!retired && fails);
     expect(payloads.responseData.x).toBe(10);
     if (retired) {
       expect(payloads.responseData.settle).toBeUndefined();
