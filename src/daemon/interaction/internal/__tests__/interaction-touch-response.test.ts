@@ -4,6 +4,7 @@ import { makeSessionStore } from '../../../../__tests__/test-utils/store-factory
 import { handleInteractionCommands } from '../../index.ts';
 import {
   buildInteractionResponseData,
+  buildTargetedTouchResponsePayloads,
   transformTouchResponseData,
 } from '../interaction-touch-response.ts';
 import type { PressCommandResult } from '@agent-device/contracts/interaction';
@@ -99,6 +100,87 @@ function selectorResult(readiness?: { polls: number; waitedMs: number }): PressC
 }
 
 const WAITED_SELECTOR_RESULT = selectorResult({ polls: 3, waitedMs: 400 });
+
+test.each([false, true])(
+  'point-touch publication after a held frame probe, retired=%s',
+  async (retired) => {
+    const sessionStore = makeSessionStore();
+    const address = 'cwd:held-touch-response:default';
+    const session = makeSession('default');
+    session.snapshot = {
+      nodes: attachRefs([{ index: 0, type: 'Button', label: 'Continue' }]),
+      createdAt: Date.now(),
+      backend: 'xctest',
+    };
+    session.snapshotGeneration = 3;
+    installTestScreenRecording(session);
+    const ref = sessionStore.publish(address, session);
+    let startProbe!: () => void;
+    let releaseProbe!: () => void;
+    const probing = new Promise<void>((resolve) => {
+      startProbe = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const result: PressCommandResult = {
+      kind: 'point',
+      point: { x: 10, y: 20 },
+      settle: {
+        settled: true,
+        waitedMs: 25,
+        captures: 2,
+        quietMs: 25,
+        timeoutMs: 2000,
+        diff: {
+          summary: { additions: 1, removals: 0, unchanged: 0 },
+          lines: [{ kind: 'added', text: 'Continue', ref: 'e1' }],
+        },
+      },
+    };
+    const running = buildTargetedTouchResponsePayloads({
+      params: {
+        req: {
+          token: 't',
+          command: 'press',
+          positionals: ['10', '20'],
+          session: 'default',
+          flags: {},
+        },
+        sessionName: address,
+        sessionRef: ref,
+        sessionStore,
+        contextFromFlags,
+        captureSnapshotForSession: async () => {
+          startProbe();
+          await released;
+          return sessionStore.requireCurrent(ref).snapshot!;
+        },
+      },
+      session,
+      result,
+      staleRefsWarning: undefined,
+      extra: {},
+    });
+    await probing;
+    let successor;
+    if (retired) {
+      sessionStore.retire(ref);
+      successor = sessionStore.publish(address, makeSession('default'));
+    }
+    releaseProbe();
+    const payloads = await running;
+    expect(payloads.responseData.x).toBe(10);
+    if (retired) {
+      expect(payloads.responseData.settle).toBeUndefined();
+      expect(payloads.result.settle).toBeUndefined();
+      expect(sessionStore.lookup(address)).toEqual(successor);
+      expect(successor?.session.snapshot).toBeUndefined();
+    } else {
+      expect(payloads.responseData.settle).toMatchObject({ refsGeneration: 3, settled: true });
+    }
+  },
+);
 
 test('the response builder reports the resolved wait and keeps the prior warning', () => {
   const { responseData, result } = buildInteractionResponseData({

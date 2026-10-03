@@ -309,15 +309,18 @@ export async function buildTargetedTouchResponsePayloads(params: {
           handlerParams.sessionStore.requireCurrent(handlerParams.sessionRef!).snapshot?.nodes ??
             [],
         );
+  const currentResult = handlerParams.sessionStore.resolveCurrent(handlerParams.sessionRef!)
+    ? result
+    : { ...result, settle: undefined };
   return buildInteractionResponseData({
-    source: { kind: 'runtime', result, publicData },
+    source: { kind: 'runtime', result: currentResult, publicData },
     referenceFrame,
     extra,
     staleRefsWarning: params.staleRefsWarning,
     settleRefsGeneration: issueSettleRefs(
       handlerParams.sessionRef,
       handlerParams.sessionStore,
-      result.settle,
+      currentResult.settle,
     ),
   });
 }
