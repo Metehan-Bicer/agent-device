@@ -9,7 +9,7 @@
 <script defer src="/agent-device/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/static/js/index.f92d202cfb.js"></script>
+<script defer src="/agent-device/static/js/index.34a984a7b3.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -48,7 +48,7 @@
 
 
 <div class="rp-table-scroll-container rp-scrollbar"><table><thead><tr><th>Platform</th><th>Environment variables</th></tr></thead><tbody><tr><td>iOS</td><td><code>LIM_IOS_INSTANCE_URL</code> (<code>status.apiUrl</code>), <code>LIM_IOS_INSTANCE_TOKEN</code> (<code>status.token</code>)</td></tr><tr><td>Android</td><td><code>LIM_ANDROID_INSTANCE_URL</code> (<code>status.apiUrl</code>), <code>LIM_ANDROID_INSTANCE_TOKEN</code> (<code>status.token</code>), <code>LIM_ANDROID_INSTANCE_ADB_URL</code> (<code>status.adbWebSocketUrl</code>)</td></tr></tbody></table></div>
-<p>These are the same variables the <code>lim</code> CLI reads, so one set works for both tools.</p>
+<p>These are the same variables the <code>lim</code> CLI reads, so one set works for both tools. Set all of a platform&#x27;s variables or none: with a partial set, <code>connect</code> fails, and the daemon disables Limrun and records <code>provider_runtime_skipped</code> in <code>daemon.log</code>.</p>
 <div class="rp-codeblock language-bash"><div class="rp-codeblock__content"><div class="rp-codeblock__content__scroll-container rp-scrollbar rp-scrollbar--always"><pre class="shiki css-variables" style="background-color:var(--shiki-background);color:var(--shiki-foreground)" tabindex="0" data-lang="bash"><code><span class="line"><span style="color:var(--shiki-token-keyword)">export</span><span style="color:var(--shiki-foreground)"> LIM_IOS_INSTANCE_URL</span><span style="color:var(--shiki-token-keyword)">=</span><span style="color:var(--shiki-foreground)">...</span></span>
 <span class="line"><span style="color:var(--shiki-token-keyword)">export</span><span style="color:var(--shiki-foreground)"> LIM_IOS_INSTANCE_TOKEN</span><span style="color:var(--shiki-token-keyword)">=</span><span style="color:var(--shiki-foreground)">...</span></span>
 <span class="line"></span>
