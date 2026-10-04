@@ -36,7 +36,7 @@ agent-device disconnect
 
 `connect` checks the instance credentials. agent-device never creates or deletes that instance: `disconnect` leaves it running, and its owner deletes it. When the variables for a platform are set, they take precedence over `LIMRUN_API_KEY` for that platform.
 
-A running daemon keeps the Limrun variables it started with. If your shell holds different ones, the first command that allocates a lease (usually `open`) refuses before it creates or attaches to an instance; run `agent-device daemon stop` (with the same `--state-dir`) and rerun the command. A shell that sets none of these variables uses the daemon's.
+A running daemon keeps the Limrun variables it started with. If your shell holds different ones, the first command that allocates a lease, such as `install` or `open`, refuses before it creates or attaches to an instance; run `agent-device daemon stop` (with the same `--state-dir`) and rerun the command. A shell that sets none of these variables uses the daemon's.
 
 `install`, and `apps` before the first `open`, still need `LIMRUN_API_KEY`, because they use Limrun asset storage. After `open`, `apps` lists the apps installed on the instance without the key. Install the app before you hand over the instance. From the Node.js runtime, `getDeviceSession(device).installRemoteApp(url)` installs from a signed asset URL without the API key.
 
