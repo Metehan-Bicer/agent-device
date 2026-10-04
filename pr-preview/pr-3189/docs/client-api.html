@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3189/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3189/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3189/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3189/static/js/index.e8ba014ddf.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3189/static/js/index.04adfecae6.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -112,6 +112,7 @@
 <li><code>tryParseSelectorChain(expression)</code></li>
 <li><code>resolveSelectorChain(nodes, chain, options)</code></li>
 <li><code>findSelectorChainMatch(nodes, chain, options)</code></li>
+<li><code>listSelectorChainMatches(nodes, chain, options)</code></li>
 <li><code>formatSelectorFailure(chain, diagnostics, options)</code></li>
 <li><code>isNodeVisible(node)</code></li>
 <li><code>isSelectorToken(token)</code></li>
@@ -623,6 +624,7 @@ executor.</p>
 <p>Use <code>agent-device/remote-config</code> for profile loading and path resolution, <code>agent-device/metro</code> for Metro preparation, reload, and tunnel lifecycle, and <code>agent-device/contracts</code> when a server consumer needs daemon request or runtime contract types. For bridged remote Metro, <code>proxyBaseUrl</code> is the bridge origin and <code>publicBaseUrl</code> is optional; the bridge descriptor supplies cloud iOS wildcard HTTPS hints and Android runtime-route hints. <code>reloadMetro()</code> calls Metro&#x27;s <code>/reload</code> endpoint, matching the terminal <code>r</code> reload path for connected React Native apps.</p>
 <h2 class="rp-toc-include" id="selector-helpers"><a href="#selector-helpers" class="rp-header-anchor rp-link" aria-hidden="true">#</a>Selector helpers</h2>
 <p>Use <code>agent-device/selectors</code> when a remote daemon or bridge needs to parse and match selector expressions without deep-importing daemon internals. Matching is platform-aware because role normalization and editability checks differ by backend.</p>
+<p><code>listSelectorChainMatches(nodes, chain, options)</code> returns every node the winning selector alternative matches, in snapshot order, plus that alternative and its index — the same first-match domain <code>findSelectorChainMatch</code> uses, without uniqueness refusal, so a runner applies its own strictness to the same nodes the CLI matched. <code>resolveSelectorChain</code> can name a LATER alternative: by default it refuses an ambiguous one and keeps walking, so the indices agree when it passes <code>requireUnique: false</code>, when the first matching alternative is unique, or when <code>disambiguateAmbiguous: true</code> resolves that alternative in place. It returns <code>null</code> when no alternative matches. <code>options</code> is <code>{ platform, requireRect? }</code>; the matched <code>SnapshotNode</code> objects are the ones passed in.</p>
 <div class="rp-codeblock language-ts"><div class="rp-codeblock__content"><div class="rp-codeblock__content__scroll-container rp-scrollbar rp-scrollbar--always"><pre class="shiki css-variables" style="background-color:var(--shiki-background);color:var(--shiki-foreground)" tabindex="0" data-lang="ts"><code><span class="line"><span style="color:var(--shiki-token-keyword)">import</span><span style="color:var(--shiki-foreground)"> { findSelectorChainMatch</span><span style="color:var(--shiki-token-punctuation)">,</span><span style="color:var(--shiki-foreground)"> parseSelectorChain } </span><span style="color:var(--shiki-token-keyword)">from</span><span style="color:var(--shiki-token-string-expression)"> &#x27;agent-device/selectors&#x27;</span><span style="color:var(--shiki-foreground)">;</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:var(--shiki-token-keyword)">const</span><span style="color:var(--shiki-token-constant)"> chain</span><span style="color:var(--shiki-token-keyword)"> =</span><span style="color:var(--shiki-token-function)"> parseSelectorChain</span><span style="color:var(--shiki-foreground)">(</span><span style="color:var(--shiki-token-string-expression)">&#x27;role=button label=&quot;Continue&quot; visible=true&#x27;</span><span style="color:var(--shiki-foreground)">);</span></span>

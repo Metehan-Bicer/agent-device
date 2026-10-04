@@ -898,6 +898,7 @@ Supported public entry points for Node consumers:
   - `tryParseSelectorChain(expression)`
   - `resolveSelectorChain(nodes, chain, options)`
   - `findSelectorChainMatch(nodes, chain, options)`
+  - `listSelectorChainMatches(nodes, chain, options)`
   - `formatSelectorFailure(chain, diagnostics, options)`
   - `isNodeVisible(node)`
   - `isSelectorToken(token)`
@@ -1470,6 +1471,8 @@ Use `agent-device/remote-config` for profile loading and path resolution, `agent
 
 Use `agent-device/selectors` when a remote daemon or bridge needs to parse and match selector expressions without deep-importing daemon internals. Matching is platform-aware because role normalization and editability checks differ by backend.
 
+`listSelectorChainMatches(nodes, chain, options)` returns every node the winning selector alternative matches, in snapshot order, plus that alternative and its index — the same first-match domain `findSelectorChainMatch` uses, without uniqueness refusal, so a runner applies its own strictness to the same nodes the CLI matched. `resolveSelectorChain` can name a LATER alternative: by default it refuses an ambiguous one and keeps walking, so the indices agree when it passes `requireUnique: false`, when the first matching alternative is unique, or when `disambiguateAmbiguous: true` resolves that alternative in place. It returns `null` when no alternative matches. `options` is `{ platform, requireRect? }`; the matched `SnapshotNode` objects are the ones passed in.
+
 ```ts
 import { findSelectorChainMatch, parseSelectorChain } from 'agent-device/selectors';
 
@@ -1832,7 +1835,7 @@ agent-device snapshot -i --platform apple --target desktop
 - Prefer selector or `@ref`-driven interactions on macOS. Window position can shift between runs, so raw x/y point commands are less stable than snapshot-derived targets.
 - Use `click --button secondary` for context menus on macOS, then run `snapshot -i` again.
 - On `frontmost-app` and `menubar` surfaces, `press` and `click` post synthetic mouse events through the macOS helper (the `desktop` surface inspects only): `--hold-ms` is how long the button stays down (at least 40 ms, 60 ms by default, because AppKit drops a release posted in the same tick as its press), `--count` is that many independent clicks (apps that detect a double-click by timing, such as Finder, still read two clicks at the default interval as one; pass an `--interval-ms` longer than the system double-click time to keep them apart), and `--double-tap` posts each click as a double-click pair. A long schedule such as `--hold-ms 10000 --count 4` is given the time it needs, and a helper stopped mid-hold — by a cancelled request, a dropped client, or its deadline — releases the button before it exits. `--jitter-px` is not applied on these surfaces.
-- With `AGENT_DEVICE_MACOS_APP_BACKEND=native`, macOS app sessions run without XCTest: no Automation Mode overlay, the app can stay behind other windows, and the real pointer stays with you. `click`, `press`, and `fill` use accessibility actions on the element at their target point; `type` inserts at the focused control and falls back to key events sent to the app; `scroll` moves the accessibility scroll bar under the front window's center. Chromium-based apps expose their full tree. `--double-tap`, press and hold, `--button secondary`, drags, and `back` are refused with `UNSUPPORTED_OPERATION`, as is a click on an element with no accessibility action; use the default XCTest backend for those. `screenshot` captures only the app's front window, even when other windows cover it.
+- With `AGENT_DEVICE_MACOS_APP_BACKEND=native`, macOS app sessions run without XCTest: no Automation Mode overlay, the app can stay behind other windows, and the real pointer stays with you. `click`, `press`, and `fill` use accessibility actions on the element at their target point; `type` inserts at the focused control and falls back to key events sent to the app; `scroll` moves the accessibility scroll bar under the front window's center. Chromium-based apps expose their full tree. The daemon then never starts the XCTest runner on macOS: `record`, `prepare`, `back`, `longpress` and `--hold-ms`, `--double-tap`, `--button secondary`, and gestures are refused with `UNSUPPORTED_OPERATION` (`reason: unsupported-device-backend`), as is a click on an element with no accessibility action. Use the default XCTest backend for those. `screenshot` captures only the app's front window, even when other windows cover it.
 - Mobile-only helpers remain unsupported on macOS: `boot`, `shutdown`, `home`, `orientation`, `app-switcher`, `action-button`, `fold`, `install`, `reinstall`, `install-from-source`, and `push`.
 
 Recommended loops:
@@ -2004,6 +2007,7 @@ On iOS, if `fill` reports `TEXT_INPUT_SYNTHESIS_BUDGET_EXCEEDED`, the text is lo
 Use plain `fill` or `type` first for ordinary login and form fields. Use `--delay-ms` on `type` or `fill` only when a debounced search field or search-as-you-type input actually misses characters, or when the app must receive incremental updates.
 Delayed typing intentionally prefers paced character entry over clipboard-style fallbacks so the target field receives each incremental update.
 On Android, `fill` also verifies text and treats IME-owned capture as a terminal failure instead of retrying against the wrong field.
+When the filled field changed but its value cannot confirm the text, `fill` succeeds with `verification: "unconfirmed"` plus target-bound `requested`/`before`/`after` evidence instead of failing. On Android that is app-owned formatting. On iOS's accessibility-driven `fill` route it is a field whose value moved off its post-clear baseline to one that does not echo the typed text, such as an OTP input announcing `6 of 6 digits`; dropped characters and stale prefixes still fail, and the coordinate-driven route still requires an exact match. Verify the result through the screen, for example the OTP slots or the next screen, instead of retrying the same fill.
 Android text entry is owned by `agent-device`: provider-native injection when available, then chunk-safe ASCII shell input. Do not switch to raw `adb`, clipboard, or paste as an agent fallback. If non-ASCII is unsupported in the current backend, report the tool/device gap.
 `click --button secondary` is the desktop context-menu flow on macOS.
 `click --button middle` is reserved for future runner support and currently returns an explicit unsupported-operation error on macOS.
@@ -2261,7 +2265,7 @@ agent-device settings permission reset screen-recording --platform macos
 - Android has no category ladder, only a `font_scale` multiplier, so the two are mapped: `large` is `1.0` up through `accessibility-extra-extra-extra-large` at `3.2`. A device holding a multiplier off that ladder reads back as the nearest rung with the exact multiplier as `platformValue`, and an unset `font_scale` reads as `large`/`1.0`.
 - A text size change is a configuration change: an app already running adopts it on its next configuration change, so relaunch the app under test (`open <app> --relaunch`) when asserting rendered sizes.
 - `settings location set <lat> <lon>` sets precise coordinates on iOS simulators and Android emulators.
-- `settings clear-app-state [app-id]` clears the active session app data, or the provided app id. Android uses `pm clear`, which removes SharedPreferences, databases, files, and cache. iOS simulator removes the app data container contents. iOS physical devices and macOS are unsupported. It does not touch the keychain, so keychain-backed credentials (e.g. Firebase auth) survive it.
+- `settings clear-app-state [app-id]` clears the active session app data, or the provided app id. Android uses `pm clear`, which removes SharedPreferences, databases, files, and cache. iOS simulator removes the app data container contents and leaves the fresh-install directory layout (empty `Documents`, `Library/Caches`, `Library/Preferences`, `SystemData`, and `tmp`, as on iOS 26.5; other runtimes may differ). iOS physical devices and macOS are unsupported. It does not touch the keychain, so keychain-backed credentials (e.g. Firebase auth) survive it.
 - `settings reset-keychain clear` resets the iOS simulator's keychain (`xcrun simctl keychain <device> reset`), removing keychain-backed credentials such as Firebase auth tokens that `clear-app-state` leaves behind. simctl has no per-app keychain reset, so this clears the keychain for every app installed on that simulator, not only the app under test — treat it as a whole-simulator, opt-in operation and pair it with `clear-app-state` for a full fresh-install reset. iOS physical devices, Android, and macOS are unsupported.
 - Face ID and Touch ID controls are iPhone and iPad simulator-only; Apple TV and Vision Pro simulators refuse them. They post the same Darwin notifications the Simulator.app Features menu posts (`xcrun simctl spawn <device> notifyutil`): `com.apple.BiometricKit_Sim.<pearl|fingerTouch>.<match|nomatch>` for match/nonmatch, and `com.apple.BiometricKit.enrollmentChanged` (set to `1`/`0`, then posted, then read back) for enroll/unenroll. No `simctl biometric` subcommand exists, so this route works on any Xcode.
 - Android `settings airplane on|off` is applied by the connectivity service (`cmd connectivity airplane-mode`, Android 11+), which drives the radios rather than only writing the `airplane_mode_on` setting. The response reports the `airplaneMode` that service holds after the change, and Android builds without that command fail without changing device state. Connectivity takes a moment to settle after the switch, so poll the app under test rather than asserting offline behavior immediately.
@@ -2602,7 +2606,7 @@ agent-device record stop                # Stop active recording
 
 - Limrun iOS and Android direct sessions record the whole simulator or emulator screen through the provider's server-side recorder, so every `--scope` captures the same frame and `--fps` and `--hide-touches` are refused with `INVALID_ARGS` before any device work. `record stop` asks the instance to stop once and then downloads the served MP4 to the output path; that download is bounded to end inside the request window, so a slow or dropped transfer ends typed, leaves no file behind, and is retried by the next `record stop` from the same URL while the instance lives. Nothing survives a daemon restart: the recording is `unreattachable` and the instance disposes the file when the lease is released.
 
-- `record stop` is safe to repeat. When its request window ends while the daemon is still exporting — typical for a long touch-overlay burn-in on a remote daemon — the export keeps running there, and a second `record stop` in the same session returns that completed recording, including the caller-side output path, without starting another recording. A finished recording whose video file is already gone reports `no active recording`.
+- `record stop` is safe to repeat. When its request window ends while the daemon is still exporting — typical for a long touch-overlay burn-in, on a local or remote daemon — the export keeps running there, and a second `record stop` in the same session returns that completed recording, including the caller-side output path, without starting another recording. A finished recording whose video file is already gone reports `no active recording`.
 
 - A recording answers two independent questions, and `record stop` reports both: whether a playable export exists, and whether the recorder stopped. `recorder` is `confirmed` when the recorder exited or acknowledged a stop meant for this recording, and `lost` when the session holding it died — an Apple recording invalidated by a runner restart. `nativePathDisposition` says what became of the artifact path the recorder itself writes to: `retirable` while that file still sits there owed a removal, and `retired` once its removal was verified. Both are optional disclosures — the export is served either way, a replay of a recording stopped before they existed omits them, and so does a backend whose recorder writes the served file itself. The vocabulary is deliberately wider than today's answers: `recorder: unconfirmed` (a probe that could not be read, or no exit inside the stop budget), the identity-mismatch reasons under `lost`, and `nativePathDisposition: pending` are declared by [ADR 0024](https://github.com/callstack/agent-device/blob/main/docs/adr/0024-screen-recording-provable-signal.md) for the steps that gain those probes, and no stop reports them yet.
 
@@ -3513,6 +3517,35 @@ agent-device connect limrun --platform android
 
 Pass `android` or `ios` to select the instance type. `connect` verifies the selected service without creating an instance.
 
+## Drive an existing instance
+
+An agent in a sandbox can drive an instance that someone else created, such as the instance behind a live preview, without your organization API key. Create the instance where the API key lives, then give the sandbox that instance's own URL and token from its `status`:
+
+| Platform | Environment variables                                                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| iOS      | `LIM_IOS_INSTANCE_URL` (`status.apiUrl`), `LIM_IOS_INSTANCE_TOKEN` (`status.token`)                                                                    |
+| Android  | `LIM_ANDROID_INSTANCE_URL` (`status.apiUrl`), `LIM_ANDROID_INSTANCE_TOKEN` (`status.token`), `LIM_ANDROID_INSTANCE_ADB_URL` (`status.adbWebSocketUrl`) |
+
+These are the same variables the `lim` CLI reads, so one set works for both tools. Set all of a platform's variables or none: with a partial set, `connect` fails, and the daemon disables Limrun and records `provider_runtime_skipped` in `daemon.log`.
+
+```bash
+export LIM_IOS_INSTANCE_URL=...
+export LIM_IOS_INSTANCE_TOKEN=...
+
+agent-device connect limrun --platform ios
+agent-device open com.example.app
+agent-device snapshot -i
+agent-device disconnect
+```
+
+`connect` checks the instance credentials. agent-device never creates or deletes that instance: `disconnect` leaves it running, and its owner deletes it. When the variables for a platform are set, they take precedence over `LIMRUN_API_KEY` for that platform.
+
+`install`, and `apps` before the first `open`, still need `LIMRUN_API_KEY`, because they use Limrun asset storage. After `open`, `apps` lists the apps installed on the instance without the key. Install the app before you hand over the instance. From the Node.js runtime, `getDeviceSession(device).installRemoteApp(url)` installs from a signed asset URL without the API key.
+
+## Keeping idle sessions alive
+
+Limrun ends an instance after its inactivity timeout, which an idle session reaches while a model thinks between steps. Set `LIMRUN_KEEP_ALIVE=1` (or `true`) to ping the instance every 30 seconds while a session is open. It is off by default, so instance lifetime is unchanged unless you ask for it. In the Node.js runtime, pass `keepAlive: true`.
+
 ## CLI workflow
 
 A new Limrun instance does not contain your app. Run `install <package-or-bundle-id> <app-path-or-url>` before `open`. The install command allocates the instance when needed, so you do not need to run `devices` first.
@@ -3531,7 +3564,7 @@ agent-device disconnect
 
 Limrun Android uses the direct ADB tunnel. Normal Android helper-backed snapshots, installs, and port reverse flow are available, including the usual Android reverse setup for a local Metro server.
 
-Limrun iOS uses the direct Limrun iOS client. It supports app lifecycle commands, snapshots, screenshots, taps, text input, scrolling, and app installation. It cannot reverse a remote device port to a local host port. For iOS Metro or React DevTools, use a publicly reachable HTTPS endpoint or bridge URL instead of a local-only address.
+Limrun iOS uses the direct Limrun iOS client. It supports app lifecycle commands, snapshots, screenshots, taps, text input, scrolling, and app installation. `open --launch-args` relaunches the app with those arguments through simctl. It cannot reverse a remote device port to a local host port. For iOS Metro or React DevTools, use a publicly reachable HTTPS endpoint or bridge URL instead of a local-only address.
 
 iOS text entry is witnessed rather than assumed. `fill` taps the target, waits for that field to take text-entry focus, and only then types, so an app that exposes fields without ever publishing a globally focused element - Flutter forms are the common case - still fills and reports `textEntryReadiness: "focused-element"`. A tap that nothing answers fails with `text_entry_focus_not_observed` instead of typing into an unknown field; `type` stays the deliberate route into whichever field already holds focus.
 
@@ -3553,11 +3586,13 @@ const runtime = new LimrunRuntime({
 });
 ```
 
+To drive existing instances, pass `instances: { ios: { apiUrl, token } }` (Android also takes `adbUrl`), with or without `apiKey`. A platform listed there never creates or deletes instances.
+
 After allocating a lease, an embedding bridge can call `runtime.getDeviceSession(device)` for the allocated device's reusable semantic capabilities. The facade includes app inventory, foreground state where Limrun exposes it, key input, bounded log reads, recording, remote asset installation, and the existing interactor. Android also exposes agent-device's `AndroidAdbProvider` abstraction for helpers and reversible port forwarding. iOS exposes a typed `simctl` execution handle for bridge-owned runner lifecycle and launch policy. Raw Limrun clients remain private to the provider runtime.
 
 ## Artifacts and troubleshooting
 
-Limrun does not currently expose provider artifacts through `agent-device artifacts`. If connect fails, check `LIMRUN_API_KEY` and the optional `LIMRUN_REGION`.
+Limrun does not currently expose provider artifacts through `agent-device artifacts`. If connect fails, check `LIMRUN_API_KEY` and the optional `LIMRUN_REGION`. For an existing instance, check its URL and token variables, and that the instance is still running.
 
 
 
