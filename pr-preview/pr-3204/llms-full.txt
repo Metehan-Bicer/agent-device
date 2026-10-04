@@ -1119,8 +1119,9 @@ advertise reverse support automatically; call `createAndroidPortReverseManager(p
 only when the provider supports `adb reverse` argument semantics. The manager makes duplicate setup
 idempotent for the same owner and rejects conflicting owners for the same local endpoint. For a
 device that other adb clients also drive, pass an executor with `{ noRebind: true }`: the manager
-runs `adb reverse --no-rebind` and does not replace a mapping it did not create. A refusal fails with
-`COMMAND_FAILED` and `details.reason: 'android_port_reverse_rebind_refused'`.
+runs `adb reverse --no-rebind` and never replaces an existing device mapping, including one it
+created. When `adb reverse --list` shows the mapping, the refusal fails with `COMMAND_FAILED` and
+`details.reason: 'android_port_reverse_rebind_refused'`. Otherwise it fails as an ordinary adb error.
 
 The device shell re-parses whatever follows `shell` or `exec-out`, so those commands are built for you:
 every dynamic word is rendered for the quoting its transport applies before it reaches the device. `adb`
@@ -2608,7 +2609,7 @@ agent-device record stop                # Stop active recording
 
 - Limrun iOS and Android direct sessions record the whole simulator or emulator screen through the provider's server-side recorder, so every `--scope` captures the same frame and `--fps` and `--hide-touches` are refused with `INVALID_ARGS` before any device work. `record stop` asks the instance to stop once and then downloads the served MP4 to the output path; that download is bounded to end inside the request window, so a slow or dropped transfer ends typed, leaves no file behind, and is retried by the next `record stop` from the same URL while the instance lives. Nothing survives a daemon restart: the recording is `unreattachable` and the instance disposes the file when the lease is released.
 
-- `record stop` is safe to repeat. When its request window ends while the daemon is still exporting — typical for a long touch-overlay burn-in on a remote daemon — the export keeps running there, and a second `record stop` in the same session returns that completed recording, including the caller-side output path, without starting another recording. A finished recording whose video file is already gone reports `no active recording`.
+- `record stop` is safe to repeat. When its request window ends while the daemon is still exporting — typical for a long touch-overlay burn-in, on a local or remote daemon — the export keeps running there, and a second `record stop` in the same session returns that completed recording, including the caller-side output path, without starting another recording. A finished recording whose video file is already gone reports `no active recording`.
 
 - A recording answers two independent questions, and `record stop` reports both: whether a playable export exists, and whether the recorder stopped. `recorder` is `confirmed` when the recorder exited or acknowledged a stop meant for this recording, and `lost` when the session holding it died — an Apple recording invalidated by a runner restart. `nativePathDisposition` says what became of the artifact path the recorder itself writes to: `retirable` while that file still sits there owed a removal, and `retired` once its removal was verified. Both are optional disclosures — the export is served either way, a replay of a recording stopped before they existed omits them, and so does a backend whose recorder writes the served file itself. The vocabulary is deliberately wider than today's answers: `recorder: unconfirmed` (a probe that could not be read, or no exit inside the stop budget), the identity-mismatch reasons under `lost`, and `nativePathDisposition: pending` are declared by [ADR 0024](https://github.com/callstack/agent-device/blob/main/docs/adr/0024-screen-recording-provable-signal.md) for the steps that gain those probes, and no stop reports them yet.
 
@@ -3527,7 +3528,7 @@ An agent in a sandbox can drive an instance that someone else created, such as t
 | iOS      | `LIM_IOS_INSTANCE_URL` (`status.apiUrl`), `LIM_IOS_INSTANCE_TOKEN` (`status.token`)                                                                    |
 | Android  | `LIM_ANDROID_INSTANCE_URL` (`status.apiUrl`), `LIM_ANDROID_INSTANCE_TOKEN` (`status.token`), `LIM_ANDROID_INSTANCE_ADB_URL` (`status.adbWebSocketUrl`) |
 
-These are the same variables the `lim` CLI reads, so one set works for both tools.
+These are the same variables the `lim` CLI reads, so one set works for both tools. Set all of a platform's variables or none: with a partial set, `connect` fails, and the daemon disables Limrun and records `provider_runtime_skipped` in `daemon.log`.
 
 ```bash
 export LIM_IOS_INSTANCE_URL=...
@@ -3541,7 +3542,7 @@ agent-device disconnect
 
 `connect` checks the instance credentials. agent-device never creates or deletes that instance: `disconnect` leaves it running, and its owner deletes it. When the variables for a platform are set, they take precedence over `LIMRUN_API_KEY` for that platform.
 
-On Android, agent-device does not replace a port reverse mapping it did not create. If the owner already maps a device port, such as `tcp:8081` for their Metro server, a reverse to that port fails with `details.reason: 'android_port_reverse_rebind_refused'`, and the owner's mapping stays in place.
+On Android, agent-device does not replace an existing port reverse mapping. If the owner already maps a device port, such as `tcp:8081` for their Metro server, a reverse to that port fails and the owner's mapping stays in place. The error has `details.reason: 'android_port_reverse_rebind_refused'` when `adb reverse --list` shows the mapping. Otherwise it is a plain ADB failure.
 
 `install`, and `apps` before the first `open`, still need `LIMRUN_API_KEY`, because they use Limrun asset storage. After `open`, `apps` lists the apps installed on the instance without the key. Install the app before you hand over the instance. From the Node.js runtime, `getDeviceSession(device).installRemoteApp(url)` installs from a signed asset URL without the API key.
 

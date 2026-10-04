@@ -22,7 +22,7 @@ An agent in a sandbox can drive an instance that someone else created, such as t
 | iOS      | `LIM_IOS_INSTANCE_URL` (`status.apiUrl`), `LIM_IOS_INSTANCE_TOKEN` (`status.token`)                                                                    |
 | Android  | `LIM_ANDROID_INSTANCE_URL` (`status.apiUrl`), `LIM_ANDROID_INSTANCE_TOKEN` (`status.token`), `LIM_ANDROID_INSTANCE_ADB_URL` (`status.adbWebSocketUrl`) |
 
-These are the same variables the `lim` CLI reads, so one set works for both tools.
+These are the same variables the `lim` CLI reads, so one set works for both tools. Set all of a platform's variables or none: with a partial set, `connect` fails, and the daemon disables Limrun and records `provider_runtime_skipped` in `daemon.log`.
 
 ```bash
 export LIM_IOS_INSTANCE_URL=...
@@ -36,7 +36,7 @@ agent-device disconnect
 
 `connect` checks the instance credentials. agent-device never creates or deletes that instance: `disconnect` leaves it running, and its owner deletes it. When the variables for a platform are set, they take precedence over `LIMRUN_API_KEY` for that platform.
 
-On Android, agent-device does not replace a port reverse mapping it did not create. If the owner already maps a device port, such as `tcp:8081` for their Metro server, a reverse to that port fails with `details.reason: 'android_port_reverse_rebind_refused'`, and the owner's mapping stays in place.
+On Android, agent-device does not replace an existing port reverse mapping. If the owner already maps a device port, such as `tcp:8081` for their Metro server, a reverse to that port fails and the owner's mapping stays in place. The error has `details.reason: 'android_port_reverse_rebind_refused'` when `adb reverse --list` shows the mapping. Otherwise it is a plain ADB failure.
 
 `install`, and `apps` before the first `open`, still need `LIMRUN_API_KEY`, because they use Limrun asset storage. After `open`, `apps` lists the apps installed on the instance without the key. Install the app before you hand over the instance. From the Node.js runtime, `getDeviceSession(device).installRemoteApp(url)` installs from a signed asset URL without the API key.
 
