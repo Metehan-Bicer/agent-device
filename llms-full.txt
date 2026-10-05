@@ -1258,7 +1258,7 @@ The complete domain-client method map is:
 - `client.sessions.list()`, `stateDir()`, `close()`, `saveScript()`, `artifacts()`
 - `client.apps.install()`, `reinstall()`, `installFromSource()`, `list()`, `open()`, `close()`, `push()`, `triggerEvent()`
 - `client.materializations.release()`
-- `client.leases.allocate()`, `heartbeat()`, `release()`
+- `client.leases.allocate()`, `heartbeat()`, `release()`. Pass `retainOnClose: true` to `allocate()` when you release the lease yourself; session `close` then leaves it active until `release()`, expiry, or daemon shutdown. The returned lease has `retainOnClose: true` only when the daemon honored it. Keep heartbeating a retained lease between sessions: it expires after its `ttlMs` like any other lease.
 - `client.metro.prepare()`, `reload()`
 - `client.capture.snapshot()`, `screenshot()`, `diff()`
 - `client.interactions.click()`, `press()`, `longPress()`, `swipe()`, `pan()`, `drag()`, `fling()`, `swipeGesture()`, `focus()`, `type()`, `fill()`, `scroll()`, `pinch()`, `rotateGesture()`, `transformGesture()`, `get()`, `is()`, `find()`
@@ -4106,7 +4106,7 @@ agent-device disconnect
 
 Passing `--daemon-auth-token <token>` instead of exporting the environment variable also works, but only authenticates the single command it is passed to; subsequent commands need the token again through the env var, a `daemonAuthToken` entry in your remote config profile, or a repeated `--daemon-auth-token` flag.
 
-`connect proxy` stores the proxy profile and client identity. Device leases are automatic on `open` and expire after five minutes without commands. That five minutes is the window `open` asks for; a lease allocated directly over the RPC without `ttlMs` keeps the daemon's one-minute inactivity default instead. Either window starts when allocation completes, not when it was requested. `close` releases the active session and device lease; `disconnect` clears local connection state.
+`connect proxy` stores the proxy profile and client identity. Device leases are automatic on `open` and expire after five minutes without commands. That five minutes is the window `open` asks for; a lease allocated directly over the RPC without `ttlMs` keeps the daemon's one-minute inactivity default instead. Either window starts when allocation completes, not when it was requested. `close` releases the active session and device lease, except a lease allocated with `retainOnClose`, which only `leases.release`, expiry, or daemon shutdown ends; `disconnect` clears local connection state.
 
 Multiple agents can share one proxy when each uses the normal `connect proxy`, `open`, commands, `close`, and `disconnect` flow. A busy device error means another agent owns the device until it closes or its inactivity lease expires.
 
