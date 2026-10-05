@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3210/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3210/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3210/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3210/static/js/index.2e89df2e61.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3210/static/js/index.17f54667af.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -379,8 +379,10 @@ was shown instead of inferring one from the largest rect on screen. Which surfac
 producer&#x27;s answer: the app window on iOS (so iPad Split View and a foldable panel do not inflate
 it), the measured screen on Android and Apple TV. It is absent when the producer measured no box —
 a macOS capture whose rects are absolute in window space, a web or Linux capture that reads a tree
-without reading a screen, or <code>--raw</code>, which validates no box — and never reported as a zero. It is
-the full size only; content-safe gesture bounds are separate.</li>
+without reading a screen, or <code>--raw</code> on an Apple target, whose projection validates no box. (An
+Android capture publishes its viewport under <code>--raw</code> too: the display it reads is the same screen
+the raw rects are measured on.) It is never reported as a zero, and it is the full size only;
+content-safe gesture bounds are separate.</li>
 <li><code>--scope &lt;text|@ref&gt;</code> returns the subtree of the first node in document order whose label, value,
 or identifier contains the scope text (case-insensitive) and whose subtree still has content in
 the requested projection, re-rooted at depth 0; no match returns an empty snapshot rather than the
