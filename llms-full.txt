@@ -2055,8 +2055,10 @@ Target-authored drag is supported on Android touch devices and iOS/iPadOS. Backe
 On iOS simulators it uses private XCTest synthesis for a continuous two-finger pan/scale/rotation path, so verify app-level metrics instead of assuming the requested values map exactly to recognizer output.
 On Android, `gesture transform` injects a geometric two-finger path. App recognizers may report non-exact pan, scale, and rotation values, so verify qualitative state such as `pan changed yes`, `pinch changed yes`, and `rotate changed yes` unless the app explicitly promises exact centroid metrics. If exact app-state values matter, prefer isolated `gesture pan`, `gesture pinch`, or `gesture rotate` commands.
 `scroll` accepts either a relative amount (`0.5` means a finger path spanning half of the viewport on that axis) or `--pixels <n>` for a fixed-distance gesture. Directional scrolls decelerate through the drag on Android to reduce release momentum within the requested duration; `scroll top` and `scroll bottom` retain inertial release for edge traversal. Reduced momentum does not guarantee an exact content offset, especially for very short gestures: apps apply pan-recognition thresholds, collapsing headers, bounds, and their own scroll physics. Large distances are clamped to the usable drag band so the gesture stays reliable across Android, iOS, and macOS.
+A recorded `scroll ... --until <selector>` step keeps its stop condition in the `.ad` script it writes, so the replay repeats the same hunt instead of one fixed gesture. A script line carries only what the flag declaration marks recorded, so distance stays a positional there (`scroll down 0.8`); `--pixels`, `--duration-ms`, and `--settle` belong to the CLI invocation, not to a step.
 A directional scroll places its swipe across the middle of the viewport, so a focused field and its keyboard would put the swipe under the keys: the gesture would land on the keyboard, the surface would not move, and the scroll would read as stuck. On iOS and Android the scroll instead keeps the whole swipe in the band above the keyboard, reporting `keyboardAvoided` and `keyboardMinY` alongside a `referenceHeight` and `pixels` measured against that shorter band. It never dismisses the keyboard, because dismissing drops focus and breaks a `fill`/`scroll`/`fill` loop; run `keyboard dismiss` yourself when you want that. When the keyboard leaves too little room to swipe, the command refuses with the `scroll_keyboard_occludes_surface` reason rather than swiping into the keys, so a scroll that cannot work says so instead of appearing stuck.
 A directional scroll also reports what it _saw_, as `movement`, because the reported distance describes the swipe that was dispatched rather than content that moved. `moved` means the content inside the scroller the swipe ran in differs from the tree the session held immediately before the gesture. `at-edge` means it did not change and the resolved container reported no hidden content left in that direction, and `unchanged` is the same measurement in a direction that has no end-of-content signal to read. `unobserved` means the pair could not back a claim in either direction — no stored tree, a stored tree the session no longer stands behind or that was captured differently, a surface that never came to rest, or a difference sitting entirely outside the scroller that was swiped, which a changing Android status bar does — so the distance rests on the gesture plan alone, and it is answered honestly rather than dressed up as a confirmation. When the surface is provably unchanged while the container the gesture ran inside still reports hidden content in that direction, the command refuses with the `scroll_no_progress` reason instead of repeating the requested distance: the gesture never reached that list, and the hint names the three ways it usually goes missing (a focused keyboard, a nested scroller, a list that ignores synthesized scrolls and needs a raw `swipe`). A scroll on a runtime that cannot read a screen carries no `movement` field at all, and a Maestro replay or a `--settle` caller is not charged a second observation of a fact its own flags already own.
+`scroll <direction> --until <selector>` is how you reach an off-screen target without guessing a distance: it repeats the gesture and re-reads the tree between passes, stopping the moment the selector is on screen rather than sailing past it, and it fails when the content runs out first. The amount is optional beside it (`scroll down 0.8 --until <selector>`) to widen each pass. The same form works inside a `.ad` script, so a flow brings a target on screen in a viewport-independent way instead of a fixed amount that passes on one screen size and fails on another.
 Default snapshot text output is visible-first, so off-screen interactive content is summarized instead of shown as tappable refs.
 When a target only appears in an off-screen summary, use `scroll <direction> --settle`: the response waits for the UI to go quiet and returns the diff against the tree you last observed, with fresh refs on the added lines, so no follow-up `snapshot -i` is needed. `back --settle` does the same for navigation. Both are best-effort and never fail the action. For repeated checks without settle, a small shell loop is enough:
 
@@ -4278,6 +4280,36 @@ agent-device open Settings --platform ios --session e2e --save-script ./workflow
 - Parent directories are created automatically when they do not exist.
 - For ambiguous bare values, use `--save-script=workflow.ad` or a path-like value such as `./workflow.ad`.
 
+## `.ad` line grammar
+
+A `.ad` line is the CLI spelling of one command: `<command> [positional ...] [flag ...]`. Whitespace separates tokens, so a value with a space needs quotes.
+
+```sh
+open "com.example.app" --relaunch
+scroll down --until 'id="far-button"'
+press id="far-button"
+wait 'label="Order summary"' 5000
+close
+```
+
+- A token quoted with `"` or `'` is one argument. Single quotes keep a `"` literal, so `'id="far-button"'` and `"id=\"far-button\""` are the same selector — write whichever matches how you typed the command at the shell.
+- Values in double quotes are JSON strings, so escape `\\`, `\"`, `\t`, and `\n`. Values in single quotes are literal, as at the shell: a backslash keeps its own character, and the only escape is `\'` for an apostrophe.
+- A script carries only the flags declared for that command and marked recorded; CLI-only spellings and per-request options are not part of a step. `--settle`, `--verify`, `scroll --pixels`/`--duration-ms`, and the device-selection flags (`--platform`, `--serial`, `--device`) are the common ones a script does not carry.
+- `help <command>` prints the flags each command accepts. `help scripting` prints this grammar.
+
+Reaching an off-screen element is viewport-independent in a script exactly as it is at the CLI. Prefer the stop condition over a fixed amount, which passes on one screen size and fails on another:
+
+```sh
+# repeats until the element is on screen
+scroll down --until 'id="checkout-submit"'
+# one gesture, viewport-relative
+scroll down 0.8
+# run to the end of the content
+scroll bottom
+```
+
+A `#` only starts a comment at the beginning of a line. A scroll line carries `--until` and keeps its distance as a positional (`scroll down 0.8 --until <selector>`). `wait` carries `--raw`, `--depth <n>`, and `--scope <selector|@ref>` (long spellings; the `-d`/`-s` CLI aliases stay out of scripts so a hand-written line like `wait text -s so funny` keeps meaning its literal text) to choose the capture its target is read from.
+
 ## Run replay
 
 ```bash
@@ -4368,7 +4400,7 @@ agent-device test ./workflows --reporter default --reporter junit:./tmp/junit.xm
 - `test` discovers `.ad` files from files, directories, or globs and runs them serially.
 - Quote relative globs to expand them on the caller from its working directory, including when the directory name contains glob characters such as `[` or `{`. A missing file input without glob characters reports an error.
 - `context platform=...` inside each `.ad` file is the target source of truth for suite execution.
-- `--platform` is a filter for suite discovery; files without platform metadata are skipped when a filter is present.
+- `--platform` is a filter for suite discovery; files without platform metadata are skipped when a filter is present. When filtering leaves no runnable sources, the no-match error reports how many sources were skipped for having no `context platform=` header versus how many declared another platform. Add the header to run a file under a filter, or omit `--platform` and let the selected device decide.
 - `context timeout=...` and `context retries=...` can be declared per script; CLI flags override metadata. Retries are capped at `3`, and duplicate keys in the context header fail fast instead of silently overriding each other.
 - By default, suite artifacts are written under `.agent-device/test-artifacts/<run-id>/...`. Each attempt writes `replay.ad`, `result.txt`, and `replay-timing.ndjson`. Failed attempts also keep copied logs and artifact files when the replay produced them.
 - Copied diagnostic artifacts receive numbered filenames when their names collide with another artifact, a replay source, timing trace, or attempt manifest. `result.txt` lists the retained names in `copiedArtifacts`.
@@ -4634,7 +4666,11 @@ Passing `--plan-digest` that no longer matches the current script — because yo
 - Repeated re-runs are slow or the app is stateful, but the script is still correct:
   - Leave the replay plan unchanged, repair app state so the reported failed step can be retried, then use its `--from`/`--plan-digest`. Resume starts at `--from`; it does not skip that step.
 - Replay file parse error:
-  - Validate quoting in `.ad` lines (unclosed quotes are rejected).
+  - Validate quoting in `.ad` lines (unclosed double quotes are rejected). A selector with a space
+    needs quotes, and `help scripting` states how each quote form decodes.
+- A replay passes on one device size and fails on another because a target was off screen:
+  - The script used a fixed `scroll` amount. Replace it with the stop condition, `scroll down --until <selector>`,
+    which repeats until the element is actually on screen.
 - A `press` or `click` step fails because its target was not found, but the element is on the
   screenshot:
   - A `selector-miss` divergence, or `error.details.readiness.end: expired`, means the element was
