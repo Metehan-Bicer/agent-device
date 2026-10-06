@@ -9,7 +9,7 @@
 <script defer src="/agent-device/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/static/js/index.699e6f88a1.js"></script>
+<script defer src="/agent-device/static/js/index.08364e6668.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -46,6 +46,7 @@ through <code>simctl pbcopy</code>.</p>
 <li><strong>Emulators</strong>: the test IME activates automatically on <code>open</code>; non-ASCII <code>fill</code>/<code>type</code> just work, no setup needed.</li>
 <li><strong>Real devices</strong>: pass <code>--test-ime</code> to <code>open</code> to opt in (off by default on real hardware, since a stuck helper IME leaves the real keyboard unavailable until restored — <code>agent-device</code> restores the previous IME on session close and on daemon startup if a prior session crashed, and <code>agent-device doctor</code> flags a stuck test IME with the exact <code>adb shell ime set &lt;id&gt;</code> command to fix it manually if needed). <code>test</code> and <code>replay</code> accept the same setting on the flow command itself (<code>--test-ime</code> / <code>--no-test-ime</code>, or <code>testIme</code> in config), which applies it to the sessions each flow run opens — this is the route a Maestro <code>eraseText</code> or non-ASCII <code>fill</code> step needs when the flow owns the session.</li>
 </ul>
+<p>If a stale input session drops a <code>fill</code> commit, agent-device rebinds the helper and retries once. An unconfirmed rebind stops text entry until it can be confirmed. If keyboard restoration cannot read its recovery record, <code>close</code> reports a failure and retains the record for startup recovery.</p>
 <p>If the helper cannot be installed (locked-down managed devices, some cloud providers), text entry falls back to the existing ASCII-only <code>adb shell input text</code> path and non-ASCII <code>fill</code>/<code>type</code> reports the gap.</p>
 <h2 class="rp-toc-include" id="android-first-helper-install-can-wait-on-an-oem-install-dialog"><a href="#android-first-helper-install-can-wait-on-an-oem-install-dialog" class="rp-header-anchor rp-link" aria-hidden="true">#</a>Android: first helper install can wait on an OEM install dialog</h2>
 <p>Some OEM builds gate the first install of a package behind the system package installer and keep <code>adb install</code> open until someone confirms it on the device screen. That applies to both <code>agent-device</code> helper APKs (the snapshot helper and the test IME), one time per package: on ColorOS, reported on an OPPO Find N6, the first install needs two taps — confirm the install, then dismiss the completion screen — and every later install of the same package is silent.</p>
