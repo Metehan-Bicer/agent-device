@@ -1486,7 +1486,7 @@ Use `agent-device/remote-config` for profile loading and path resolution, `agent
 
 ## Selector helpers
 
-Use `agent-device/selectors` when a remote daemon or bridge needs to parse and match selector expressions without deep-importing daemon internals. Matching is platform-aware because role normalization and editability checks differ by backend.
+Use `agent-device/selectors` when a remote daemon or bridge needs to parse and match selector expressions without deep-importing daemon internals. The `role=` term matches the platform-neutral `kind` vocabulary that `snapshot --json` publishes (see [Snapshots](/agent-device/pr-preview/pr-3241/docs/snapshots.md#structured-node-fields---json)): pass the nodes as captured, and a node whose `kind` is `text` always matches `role=text`. Separately, pre-reconciliation leaf spellings (`statictext`, `edittext`, `textview`, …) still match during a deprecation window, each on the nodes that actually carried that class. A legacy spelling matches beside such a node's `kind`, not in place of it — `role=webarea` resolves a macOS-helper `AXWebArea` node whose `kind` is `axwebarea`, for example. Matching stays platform-aware because editability checks differ by backend.
 
 `listSelectorChainMatches(nodes, chain, options)` returns every node the winning selector alternative matches, in snapshot order, plus that alternative and its index — the same first-match domain `findSelectorChainMatch` uses, without uniqueness refusal, so a runner applies its own strictness to the same nodes the CLI matched. `resolveSelectorChain` can name a LATER alternative: by default it refuses an ambiguous one and keeps walking, so the indices agree when it passes `requireUnique: false`, when the first matching alternative is unique, or when `disambiguateAmbiguous: true` resolves that alternative in place. It returns `null` when no alternative matches. `options` is `{ platform, requireRect? }`; the matched `SnapshotNode` objects are the ones passed in.
 
@@ -2055,8 +2055,10 @@ Target-authored drag is supported on Android touch devices and iOS/iPadOS. Backe
 On iOS simulators it uses private XCTest synthesis for a continuous two-finger pan/scale/rotation path, so verify app-level metrics instead of assuming the requested values map exactly to recognizer output.
 On Android, `gesture transform` injects a geometric two-finger path. App recognizers may report non-exact pan, scale, and rotation values, so verify qualitative state such as `pan changed yes`, `pinch changed yes`, and `rotate changed yes` unless the app explicitly promises exact centroid metrics. If exact app-state values matter, prefer isolated `gesture pan`, `gesture pinch`, or `gesture rotate` commands.
 `scroll` accepts either a relative amount (`0.5` means a finger path spanning half of the viewport on that axis) or `--pixels <n>` for a fixed-distance gesture. Directional scrolls decelerate through the drag on Android to reduce release momentum within the requested duration; `scroll top` and `scroll bottom` retain inertial release for edge traversal. Reduced momentum does not guarantee an exact content offset, especially for very short gestures: apps apply pan-recognition thresholds, collapsing headers, bounds, and their own scroll physics. Large distances are clamped to the usable drag band so the gesture stays reliable across Android, iOS, and macOS.
+A recorded `scroll ... --until <selector>` step keeps its stop condition in the `.ad` script it writes, so the replay repeats the same hunt instead of one fixed gesture. A script line carries only what the flag declaration marks recorded, so distance stays a positional there (`scroll down 0.8`); `--pixels`, `--duration-ms`, and `--settle` belong to the CLI invocation, not to a step.
 A directional scroll places its swipe across the middle of the viewport, so a focused field and its keyboard would put the swipe under the keys: the gesture would land on the keyboard, the surface would not move, and the scroll would read as stuck. On iOS and Android the scroll instead keeps the whole swipe in the band above the keyboard, reporting `keyboardAvoided` and `keyboardMinY` alongside a `referenceHeight` and `pixels` measured against that shorter band. It never dismisses the keyboard, because dismissing drops focus and breaks a `fill`/`scroll`/`fill` loop; run `keyboard dismiss` yourself when you want that. When the keyboard leaves too little room to swipe, the command refuses with the `scroll_keyboard_occludes_surface` reason rather than swiping into the keys, so a scroll that cannot work says so instead of appearing stuck.
 A directional scroll also reports what it _saw_, as `movement`, because the reported distance describes the swipe that was dispatched rather than content that moved. `moved` means the content inside the scroller the swipe ran in differs from the tree the session held immediately before the gesture. `at-edge` means it did not change and the resolved container reported no hidden content left in that direction, and `unchanged` is the same measurement in a direction that has no end-of-content signal to read. `unobserved` means the pair could not back a claim in either direction — no stored tree, a stored tree the session no longer stands behind or that was captured differently, a surface that never came to rest, or a difference sitting entirely outside the scroller that was swiped, which a changing Android status bar does — so the distance rests on the gesture plan alone, and it is answered honestly rather than dressed up as a confirmation. When the surface is provably unchanged while the container the gesture ran inside still reports hidden content in that direction, the command refuses with the `scroll_no_progress` reason instead of repeating the requested distance: the gesture never reached that list, and the hint names the three ways it usually goes missing (a focused keyboard, a nested scroller, a list that ignores synthesized scrolls and needs a raw `swipe`). A scroll on a runtime that cannot read a screen carries no `movement` field at all, and a Maestro replay or a `--settle` caller is not charged a second observation of a fact its own flags already own.
+`scroll <direction> --until <selector>` is how you reach an off-screen target without guessing a distance: it repeats the gesture and re-reads the tree between passes, stopping the moment the selector is on screen rather than sailing past it, and it fails when the content runs out first. The amount is optional beside it (`scroll down 0.8 --until <selector>`) to widen each pass. The same form works inside a `.ad` script, so a flow brings a target on screen in a viewport-independent way instead of a fixed amount that passes on one screen size and fails on another.
 Default snapshot text output is visible-first, so off-screen interactive content is summarized instead of shown as tappable refs.
 When a target only appears in an off-screen summary, use `scroll <direction> --settle`: the response waits for the UI to go quiet and returns the diff against the tree you last observed, with fresh refs on the added lines, so no follow-up `snapshot -i` is needed. `back --settle` does the same for navigation. Both are best-effort and never fail the action. For repeated checks without settle, a small shell loop is enough:
 
@@ -3004,6 +3006,7 @@ These env vars are the supported user-facing configuration surface. Other `AGENT
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CLI defaults and config             | `AGENT_DEVICE_HOME`, `AGENT_DEVICE_CONFIG`, `AGENT_DEVICE_SESSION`, `AGENT_DEVICE_PLATFORM`, `AGENT_DEVICE_SCREENSHOT_SCALE`, `AGENT_DEVICE_SESSION_LOCK`, `AGENT_DEVICE_DAEMON_BASE_URL`, `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, `AGENT_DEVICE_CLOUD_BASE_URL`                                                                   | Public                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Device scoping                      | `AGENT_DEVICE_ANDROID_DEVICE_ALLOWLIST`                                                                                                                                                                                                                                                                                      | Public                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Android test IME                    | `AGENT_DEVICE_TEST_IME`                                                                                                                                                                                                                                                                                                      | Public. Same setting as `--test-ime` / `--no-test-ime` on `open`, `test`, and `replay`; see known limitations.                                                                                                                                                                                                                                                                                                               |
 | Local daemon storage                | `AGENT_DEVICE_STATE_DIR`                                                                                                                                                                                                                                                                                                     | Public                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Metro and install helpers           | `AGENT_DEVICE_METRO_BEARER_TOKEN`, `AGENT_DEVICE_BUNDLETOOL_JAR`                                                                                                                                                                                                                                                             | Public                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | App hooks and logs                  | `AGENT_DEVICE_APP_EVENT_URL_TEMPLATE`, `AGENT_DEVICE_IOS_APP_EVENT_URL_TEMPLATE`, `AGENT_DEVICE_MACOS_APP_EVENT_URL_TEMPLATE`, `AGENT_DEVICE_ANDROID_APP_EVENT_URL_TEMPLATE`, `AGENT_DEVICE_APP_LOG_MAX_BYTES`, `AGENT_DEVICE_APP_LOG_MAX_FILES`, `AGENT_DEVICE_APP_LOG_REDACT_PATTERNS`, `AGENT_DEVICE_EVENT_LOG_MAX_BYTES` | Public. Byte caps take whole integers (`5242880`), not `5MB`.                                                                                                                                                                                                                                                                                                                                                                |
@@ -3518,7 +3521,7 @@ through `simctl pbcopy`.
 `adb shell input text` (the local ASCII-only fallback) cannot inject non-ASCII text (for example Chinese characters or emoji) on any Android system image. `agent-device` ships its own headless test IME (`android-ime-helper`) that handles this natively — it also removes the visible system keyboard from snapshots entirely, which the manual-ADBKeyBoard workaround this section used to describe never did.
 
 - **Emulators**: the test IME activates automatically on `open`; non-ASCII `fill`/`type` just work, no setup needed.
-- **Real devices**: pass `--test-ime` to `open` to opt in (off by default on real hardware, since a stuck helper IME leaves the real keyboard unavailable until restored — `agent-device` restores the previous IME on session close and on daemon startup if a prior session crashed, and `agent-device doctor` flags a stuck test IME with the exact `adb shell ime set <id>` command to fix it manually if needed).
+- **Real devices**: pass `--test-ime` to `open` to opt in (off by default on real hardware, since a stuck helper IME leaves the real keyboard unavailable until restored — `agent-device` restores the previous IME on session close and on daemon startup if a prior session crashed, and `agent-device doctor` flags a stuck test IME with the exact `adb shell ime set <id>` command to fix it manually if needed). `test` and `replay` accept the same setting on the flow command itself (`--test-ime` / `--no-test-ime`, or `testIme` in config), which applies it to the sessions each flow run opens — this is the route a Maestro `eraseText` or non-ASCII `fill` step needs when the flow owns the session.
 
 If the helper cannot be installed (locked-down managed devices, some cloud providers), text entry falls back to the existing ASCII-only `adb shell input text` path and non-ASCII `fill`/`type` reports the gap.
 
@@ -4279,6 +4282,36 @@ agent-device open Settings --platform ios --session e2e --save-script ./workflow
 - Parent directories are created automatically when they do not exist.
 - For ambiguous bare values, use `--save-script=workflow.ad` or a path-like value such as `./workflow.ad`.
 
+## `.ad` line grammar
+
+A `.ad` line is the CLI spelling of one command: `<command> [positional ...] [flag ...]`. Whitespace separates tokens, so a value with a space needs quotes.
+
+```sh
+open "com.example.app" --relaunch
+scroll down --until 'id="far-button"'
+press id="far-button"
+wait 'label="Order summary"' 5000
+close
+```
+
+- A token quoted with `"` or `'` is one argument. Single quotes keep a `"` literal, so `'id="far-button"'` and `"id=\"far-button\""` are the same selector — write whichever matches how you typed the command at the shell.
+- Values in double quotes are JSON strings, so escape `\\`, `\"`, `\t`, and `\n`. Values in single quotes are literal, as at the shell: a backslash keeps its own character, and the only escape is `\'` for an apostrophe.
+- A script carries only the flags declared for that command and marked recorded; CLI-only spellings and per-request options are not part of a step. `--settle`, `--verify`, `scroll --pixels`/`--duration-ms`, and the device-selection flags (`--platform`, `--serial`, `--device`) are the common ones a script does not carry.
+- `help <command>` prints the flags each command accepts. `help scripting` prints this grammar.
+
+Reaching an off-screen element is viewport-independent in a script exactly as it is at the CLI. Prefer the stop condition over a fixed amount, which passes on one screen size and fails on another:
+
+```sh
+# repeats until the element is on screen
+scroll down --until 'id="checkout-submit"'
+# one gesture, viewport-relative
+scroll down 0.8
+# run to the end of the content
+scroll bottom
+```
+
+A `#` only starts a comment at the beginning of a line. A scroll line carries `--until` and keeps its distance as a positional (`scroll down 0.8 --until <selector>`). `wait` carries `--raw`, `--depth <n>`, and `--scope <selector|@ref>` (long spellings; the `-d`/`-s` CLI aliases stay out of scripts so a hand-written line like `wait text -s so funny` keeps meaning its literal text) to choose the capture its target is read from.
+
 ## Run replay
 
 ```bash
@@ -4369,7 +4402,7 @@ agent-device test ./workflows --reporter default --reporter junit:./tmp/junit.xm
 - `test` discovers `.ad` files from files, directories, or globs and runs them serially.
 - Quote relative globs to expand them on the caller from its working directory, including when the directory name contains glob characters such as `[` or `{`. A missing file input without glob characters reports an error.
 - `context platform=...` inside each `.ad` file is the target source of truth for suite execution.
-- `--platform` is a filter for suite discovery; files without platform metadata are skipped when a filter is present.
+- `--platform` is a filter for suite discovery; files without platform metadata are skipped when a filter is present. When filtering leaves no runnable sources, the no-match error reports how many sources were skipped for having no `context platform=` header versus how many declared another platform. Add the header to run a file under a filter, or omit `--platform` and let the selected device decide.
 - `context timeout=...` and `context retries=...` can be declared per script; CLI flags override metadata. Retries are capped at `3`, and duplicate keys in the context header fail fast instead of silently overriding each other.
 - By default, suite artifacts are written under `.agent-device/test-artifacts/<run-id>/...`. Each attempt writes `replay.ad`, `result.txt`, and `replay-timing.ndjson`. Failed attempts also keep copied logs and artifact files when the replay produced them.
 - Copied diagnostic artifacts receive numbered filenames when their names collide with another artifact, a replay source, timing trace, or attempt manifest. `result.txt` lists the retained names in `copiedArtifacts`.
@@ -4635,7 +4668,11 @@ Passing `--plan-digest` that no longer matches the current script — because yo
 - Repeated re-runs are slow or the app is stateful, but the script is still correct:
   - Leave the replay plan unchanged, repair app state so the reported failed step can be retried, then use its `--from`/`--plan-digest`. Resume starts at `--from`; it does not skip that step.
 - Replay file parse error:
-  - Validate quoting in `.ad` lines (unclosed quotes are rejected).
+  - Validate quoting in `.ad` lines (unclosed double quotes are rejected). A selector with a space
+    needs quotes, and `help scripting` states how each quote form decodes.
+- A replay passes on one device size and fails on another because a target was off screen:
+  - The script used a fixed `scroll` amount. Replace it with the stop condition, `scroll down --until <selector>`,
+    which repeats until the element is actually on screen.
 - A `press` or `click` step fails because its target was not found, but the element is on the
   screenshot:
   - A `selector-miss` divergence, or `error.details.readiness.end: expired`, means the element was
@@ -4729,6 +4766,7 @@ agent-device find id "com.example:id/login" click
 
 Tips:
 
+- `find role <value>` and the `role=` selector term match the platform-neutral `kind` vocabulary that `snapshot --json` publishes (`button`, `text`, `text-field`, `switch`, …). Older leaf spellings (`statictext`, `edittext`, `textview`) still match during a deprecation window, each on the nodes that actually carried that class.
 - Use `find ... wait <timeoutMs>` to wait for UI to appear.
 - Combine with scoped snapshots using `snapshot -s "<label>"` for speed.
 - \[Android] If a matched node is not hittable, agent-device will click/focus the nearest hittable ancestor.
@@ -4964,11 +5002,15 @@ Every node in `snapshot --json` output carries `kind`, next to `type` when the p
 On iOS, `role` (when present) is the native AX class (`UIButton`) — a different fact carried only
 on iOS nodes; `kind` is the cross-platform one, present on every node on every platform.
 
-`role=` selectors (and `find role=...`) do not share `kind`'s vocabulary yet: they match a raw,
-leaf-only normalization of `type` (`statictext`, `edittext`), not `kind` values like `text` or
-`text-field`. Reconciling the two is tracked separately
-([#3021](https://github.com/callstack/agent-device/issues/3021)) because it would change matching
-for selectors already in use.
+`role=` selectors (and `find role=...`) match `kind`'s vocabulary: a node whose `kind` is `text`
+or `text-field` always matches `role=text` / `role=text-field` — the bracketed word a snapshot
+shows for that node
+([#3021](https://github.com/callstack/agent-device/issues/3021)). Spellings from before that
+reconciliation — the raw leaf classes `role=statictext`, `role=edittext`, `role=textview`,
+`role=searchfield`, and the rest of the leaf vocabulary — stay accepted during a deprecation window,
+each on the very nodes that carried that class (so `role=linearlayout` still never matches a
+`FrameLayout` row the way a shared `group` alias would). Prefer the `kind` spelling in new
+selectors; the leaf aliases are deprecated and will be removed in a future breaking release.
 
 ## iOS capture behavior
 
