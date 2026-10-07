@@ -933,6 +933,8 @@ Supported public entry points for Node consumers:
   - `runtime.getDeviceSession(device)`
   - types: `LimrunRuntimeOptions`, `LimrunDeviceSession`, `LimrunAndroidDeviceSession`,
     `LimrunIosDeviceSession`, `LimrunIosCommandExecution`
+- `agent-device/plugins/webdriver`
+  - experimental `WebDriverPluginOptions` for providers using the shared engine.
 - `agent-device/plugins`
   - experimental factory context: `ProviderPluginHost`; see [provider plugins](/agent-device/pr-preview/pr-3289/docs/plugins.md).
 - `agent-device/ai-sdk`
@@ -1034,7 +1036,7 @@ stdout/stderr. The option mirrors `open --launch-console` and is not valid for U
 or contacts the daemon. Pass `{ stateDir }` to resolve an explicit override the same way the CLI resolves `--state-dir`.
 
 `client.sessions.artifacts({ provider, providerSessionId })` mirrors `artifacts --provider ... --provider-session ...` and returns provider-hosted `cloudArtifacts`.
-Use it for BrowserStack or AWS Device Farm session videos/logs after a cloud session has stopped, or omit `providerSessionId` when an embedding host has registered a provider runtime that can infer the active lease. Limrun does not currently expose provider artifacts through this command.
+Use it for BrowserStack, AWS Device Farm, or TestMu AI session videos/logs after a cloud session has stopped, or omit `providerSessionId` when an embedding host has registered a provider runtime that can infer the active lease. Limrun does not currently expose provider artifacts through this command.
 
 ```ts
 const result = await client.sessions.artifacts({
@@ -1051,7 +1053,7 @@ if ('cloudArtifacts' in result) {
 
 ## Device cloud sessions
 
-Limrun, BrowserStack, and AWS Device Farm can be driven through the normal typed client methods. Use the corresponding CLI `connect` flow when you want persisted local connection state. Use direct client config when a Node integration already owns credentials and provider selectors.
+Limrun, BrowserStack, AWS Device Farm, and TestMu AI can be driven through the normal typed client methods. Use the corresponding CLI `connect` flow when you want persisted local connection state. Use direct client config when a Node integration already owns credentials and provider selectors.
 
 ```ts
 import { createAgentDeviceClient } from 'agent-device';
@@ -1075,7 +1077,7 @@ from an explicit selector, an existing session, one local booted/bootable candid
 simulator with the app installed, or one provider-owned candidate. Ambiguous requests fail with
 structured retry selectors instead of silently retargeting.
 
-Use `client.sessions.artifacts({ provider, providerSessionId })` with `closed.provider?.providerSessionId` to fetch provider-hosted video and log URLs after close. See the [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md), [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md), and [Limrun](/agent-device/pr-preview/pr-3289/docs/limrun.md) guides for provider-specific setup.
+Use `client.sessions.artifacts({ provider, providerSessionId })` with `closed.provider?.providerSessionId` to fetch provider-hosted video and log URLs after close. See the [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md), [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md), [TestMu AI](/agent-device/pr-preview/pr-3289/docs/testmu.md), and [Limrun](/agent-device/pr-preview/pr-3289/docs/limrun.md) guides for provider-specific setup.
 
 ## Web sessions
 
@@ -1626,7 +1628,7 @@ agent-device fold open
 - Remote daemon clients can pass `--daemon-base-url http(s)://host:port[/base-path]` to skip local daemon discovery/startup and call a remote HTTP daemon directly.
 - Use `--daemon-auth-token <token>` (or `AGENT_DEVICE_DAEMON_AUTH_TOKEN`) for explicit service/API-token automation against non-loopback remote daemon URLs; the client sends it in both the JSON-RPC request token and HTTP auth headers.
 - Use [Remote Proxy](/agent-device/pr-preview/pr-3289/docs/remote-proxy.md) when you need to run `agent-device proxy` on a Mac with simulator/device access and drive it from another machine through cloudflared, ngrok, or another HTTP tunnel.
-- Use [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md) or [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md) when a CI agent needs a hosted device session without interactive login.
+- Use [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md), [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md), or [TestMu AI](/agent-device/pr-preview/pr-3289/docs/testmu.md) when a CI agent needs a hosted device session without interactive login.
 - For human cloud access, `connect` can discover a cloud connection profile, while `connect --remote-config ...` uses a local profile. Both refresh a stored CLI session into a short-lived `adc_agent_...` token when needed. If no CLI session exists, interactive shells start login automatically; CI and non-interactive shells fail with API-token setup instructions. Use `--no-login` to disable implicit login. `AGENT_DEVICE_CLOUD_BASE_URL` is the bridge/control-plane API origin; its `/api-keys` route may redirect to the dashboard for token creation.
 - For remote `connect` and `connect --remote-config` flows, see [Remote Metro workflow](#remote-metro-workflow).
 - Android React Native relaunch flows require an installed package name for `open --relaunch`; install/reinstall the APK first, then relaunch by package. `open <apk|aab> --relaunch` is rejected because runtime hints are written through the installed app sandbox.
@@ -2839,7 +2841,7 @@ agent-device artifacts --provider aws-device-farm --provider-session <remote-acc
 - `artifacts` lists provider-hosted cloud artifacts such as videos, Appium logs, device logs, automation logs, and provider dashboard links.
 - The response uses `cloudArtifacts` so it stays separate from daemon-managed local `artifacts` returned by screenshot, recording, install, replay, and remote materialization flows.
 - Plain text output prints ready provider URLs. Use `--json` when scripts need the structured `cloudArtifacts` array.
-- Historical lookup requires `--provider-session <id>` and `--provider <name>`. BrowserStack uses `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY`. AWS Device Farm uses the AWS CLI credential chain and infers the region from the session ARN when possible. See [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md) and [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md) for CI credential setup.
+- Historical lookup requires `--provider-session <id>` and `--provider <name>`. BrowserStack uses `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY`. TestMu AI uses `LT_USERNAME` and `LT_ACCESS_KEY`. AWS Device Farm uses the AWS CLI credential chain and infers the region from the session ARN when possible. See [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md), [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md), and [TestMu AI](/agent-device/pr-preview/pr-3289/docs/testmu.md) for CI credential setup.
 - When a cloud runtime is registered in-process by an embedding host, `artifacts` can infer the active provider session from the current lease before disconnect.
 - `disconnect --json` and `close --json` include provider release data when the runtime returns final cloud artifacts after session teardown. Some providers only finalize video/log URLs after the remote session is stopped, so retry `agent-device artifacts <provider-session-id> --provider <name> --json` if the first response is `pending`.
 
@@ -3244,9 +3246,10 @@ Use a device cloud or farm when an agent needs to automate a hosted mobile devic
 
 - [BrowserStack](/agent-device/pr-preview/pr-3289/docs/browserstack.md): Android and iOS App Automate sessions over WebDriver.
 - [AWS Device Farm](/agent-device/pr-preview/pr-3289/docs/aws-device-farm.md): Android and iOS remote-access sessions through AWS.
+- [TestMu AI](/agent-device/pr-preview/pr-3289/docs/testmu.md): Android emulator, iOS simulator, and real-device sessions over WebDriver.
 - [Limrun](/agent-device/pr-preview/pr-3289/docs/limrun.md): direct iOS simulator and Android emulator instances.
 
-All three integrations run through the local `agent-device` daemon. `connect` checks the credentials and configuration, then saves non-secret connection state. It does not allocate a device. BrowserStack and AWS Device Farm allocate a hosted session on `open`. Limrun allocates an instance on the first device command, such as `install` or `open`.
+All four integrations run through the local `agent-device` daemon. `connect` checks the credentials and configuration, then saves non-secret connection state. It does not allocate a device. BrowserStack, AWS Device Farm, and TestMu AI allocate a hosted session on `open`. Limrun allocates an instance on the first device command, such as `install` or `open`.
 
 For each provider, the standard lifecycle is:
 
@@ -3257,7 +3260,7 @@ For each provider, the standard lifecycle is:
 
 Each provider reads only its own provider flags (`--provider-*` and `--aws-*`). A flag the provider does not use fails with `INVALID_ARGS` naming the flag, whether it arrives through `connect`, `client.leases.allocate()`, or a remote-config profile, so a setting is never silently dropped.
 
-Each provider guide covers its connection selectors, client configuration, MCP setup, artifacts, and troubleshooting. Generated remote profiles are safe to store as non-secret configuration. They may include app IDs, ARNs, device names, OS versions, and labels, but never provider API keys or AWS secret keys.
+Each provider guide covers its connection selectors, client configuration, MCP setup, artifacts, and troubleshooting. Generated remote profiles are safe to store as non-secret configuration. They may include app IDs, ARNs, device names, OS versions, and labels, but never provider API keys, access keys, or AWS secret keys.
 
 
 
@@ -3894,11 +3897,40 @@ The interface is experimental. Publish this declaration in your package manifest
 {"agentDevicePlugin": {"apiVersion": 1, "provider": "example", "entry": "./dist/plugin.mjs"}}
 ```
 
-Use `agent-device` as a development dependency. The default factory accepts `ProviderPluginHost` from `agent-device/plugins`: `env`, package-specific `options`, and `createError` for host-recognized errors. Return `{ runtime, platformModule }` implementing the [provider runtime](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/provider-device-runtime.ts) and [platform module](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/platform-runtime-operations.ts) contracts. Both provider IDs must match the manifest; the module owner must declare `kind: 'provider-runtime'` and a nonempty `instance`. Core checks required runtime methods and owner metadata at startup; operation contracts are checked when used. Provider packages own implementation types; the SDK exposes only factory context. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
+Use `agent-device` as a development dependency. The default factory accepts `ProviderPluginHost` from `agent-device/plugins`: `env`, package-specific `options`, `clientVersion`, and `createError` for host-recognized errors. Return `{ runtime, platformModule }` implementing the [provider runtime](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/provider-device-runtime.ts) and [platform module](https://github.com/callstack/agent-device/blob/main/packages/contracts/src/platform-runtime-operations.ts) contracts. Both provider IDs must match the manifest; the module owner must declare `kind: 'provider-runtime'` and a nonempty `instance`. Core checks required runtime methods and owner metadata at startup; operation contracts are checked when used. Provider packages own implementation types; the SDK exposes only factory context. Set options through `plugins["<package>"].options` in user config; leave `installation` unchanged.
 
 Keep initialization prompt and free of network I/O or device allocation; a stalled factory blocks startup. Load platform mechanics through `platformModule.loadRuntime` and perform remote work in request-bound operations. A failing factory cleans up its own resources; core shuts down previously returned runtimes if another plugin fails.
 
-Incompatible contract changes require a new API version. Plugins cannot replace bundled providers or register arbitrary commands. Installing a package does not add `connect <provider>`; provider-specific connect adapters need separate support. Limrun, BrowserStack, and AWS Device Farm remain bundled.
+Incompatible contract changes require a new API version. Plugins cannot replace bundled providers or register arbitrary commands. Plugins can add `connect <provider>` through the connection callbacks described below. Limrun, BrowserStack, and AWS Device Farm remain bundled.
+
+For an Appium or WebDriver service, return `{ webDriver: options }` instead of building an engine. `WebDriverPluginOptions` is available through the type-only `agent-device/plugins/webdriver` import. Core supplies the client version and creates the shared runtime. Provider callbacks prepare sessions, upload apps, and retrieve artifacts.
+
+To support `agent-device connect example`, declare `agentDevicePlugin.connection` in the package manifest:
+
+```json
+{
+  "agentDevicePlugin": {
+    "apiVersion": 1,
+    "provider": "example",
+    "entry": "./dist/plugin.mjs",
+    "connection": {
+      "leaseKind": "direct-device-provider",
+      "requiresAppAttachment": false,
+      "requiresRemoteDaemon": false,
+      "supportsArtifacts": false,
+      "supportsDeferredAppSelection": true,
+      "supportsDirectPortReverse": false,
+      "usesCloudWebDriverLease": false
+    }
+  }
+}
+```
+
+If the provider reads credentials from the environment, list the variables in `agentDevicePlugin.credentialVariables`, for example `["EXAMPLE_USERNAME", "EXAMPLE_ACCESS_KEY"]`. A local daemon keeps the values it started with; when the shell holds different ones, the first command that allocates a lease refuses with reason `provider-credentials-changed` until the daemon is stopped. Core reads this list from the manifest without loading the plugin, and treats a whitespace-only value as unset.
+
+Return `connection` alongside the runtime or WebDriver options. Its `resolve({ flags, env, cwd, stateDir })` callback validates provider flags and returns `{ profile, extraFlags? }`; `profile.leaseProvider` must match the manifest. Core supplies connection identity, session defaults, Metro settings, and persists the profile. Its async `verify({ flags, env })` callback returns the provider verification result. These callbacks run without allocating a device and their temporary runtimes are shut down afterwards.
+
+Bundle the plugin implementation and ship ready-to-run ESM: installation disables lifecycle scripts. Bundle shared implementation helpers with the plugin; `AppError` carries a shared brand so core preserves its code and details across package copies. Import types with `import type` to keep them out of the runtime dependency graph.
 
 
 
@@ -5189,6 +5221,226 @@ them. Explicit `false` and `0` are kept; an absent field means the fact was unav
 - `selectionStart`/`selectionEnd` are accessibility selection offsets. They are independent of
   `editable` (read-only selectable text exposes them too), they are not a character count, and
   they do not prove that a masked or secure value equals expected text.
+
+
+
+---
+url: /agent-device/pr-preview/pr-3289/docs/testmu.md
+---
+
+# TestMu AI
+
+TestMu AI (formerly LambdaTest) hosts virtual devices for Android emulator and iOS simulator
+WebDriver sessions, and real devices you select with `--provider-device-type real`. One Appium hub
+fronts both pools; agent-device selects the pool with `isRealMobile` and defaults to the
+virtual-device pool.
+
+## Install the plugin
+
+```bash
+agent-device plugins add @agent-device/testmu
+```
+
+The provider is an optional npm package installed under `AGENT_DEVICE_HOME`.
+After adding or updating it, close sessions and run `agent-device daemon stop`
+with the state directory you use; the next device command loads the selected plugin.
+
+## Credentials and connection
+
+Set TestMu AI credentials in a non-interactive environment. These are the same variables every
+TestMu AI SDK reads:
+
+```bash
+export LT_USERNAME=...
+export LT_ACCESS_KEY=...
+```
+
+Connect with the platform, exact device name and OS version, and the app to test:
+
+```bash
+agent-device connect testmu \
+  --platform android \
+  --device "Galaxy S22 Ultra 5G" \
+  --provider-os-version 14 \
+  --provider-app lt://APP-id
+```
+
+`--device` and `--provider-os-version` must match the virtual-device catalog spelling exactly. The
+hub rejects `--provider-os-version 18` for a device listed with `18.0`, so `connect` does too and
+lists the versions the device offers.
+
+`--provider-app` accepts a TestMu AI app reference such as `lt://APP...`, an HTTP(S) app URL, or
+an existing local app path (`.apk`, or a zipped simulator `.app` for iOS). When `open` creates the
+hosted session, agent-device uploads a local path, and TestMu AI fetches a URL, through the
+virtual-device upload API.
+
+During `connect`, agent-device checks the device/OS pair against TestMu AI's virtual-device
+catalog (`/capability/generator?isVirtualDevice=true`), verifies the credentials against your
+uploaded-app listing, looks an `lt://` reference up in that listing, and confirms that a local
+artifact exists before saving its absolute path. `connect` does not prove the app usable: an `lt://`
+id missing from the listing is still accepted, and TestMu AI validates it, like a URL or local
+upload, only when the session is created. `open` still needs the app's installed package or bundle
+identifier, not the upload name or `lt://` id.
+
+Optional labels:
+
+```bash
+--provider-project agent-device
+--provider-build "$GITHUB_RUN_ID"
+--provider-session-name "$GITHUB_JOB"
+```
+
+Optional device features:
+
+```bash
+--provider-device-orientation portrait   # or landscape        (alias --device-orientation)
+--provider-geo-location US                                   # (alias --geo-location)
+--provider-timezone UTC+05:30                                # (alias --timezone)
+--provider-appium-version 2.16.2                             # (alias --appium-version)
+--provider-language fr                                       # (alias --language)
+--provider-locale fr_FR                                      # (alias --locale)
+```
+
+TestMu AI receives these values in `lt:options` when it creates the hosted session.
+
+- Without `--provider-appium-version`, agent-device sends no Appium version and TestMu AI starts
+  its default server for the device. Pin a version when a suite depends on one.
+- `--provider-network-profile`, `--provider-custom-network`, and `--provider-no-resign-app` are
+  BrowserStack capabilities; `connect testmu` and TestMu AI session creation refuse them by flag
+  name rather than ignoring them.
+- Session video and device logs are requested on every session so `artifacts` has something to
+  return.
+
+## Real devices
+
+Pass `--provider-device-type real` to run on a physical device. Everything else works as for
+virtual devices: `connect` checks the device/OS pair against the real-device catalog
+(`/capability/generator?isVirtualDevice=false`), and a local path or URL is uploaded through the
+real-device upload API.
+
+```bash
+agent-device connect testmu \
+  --provider-device-type real \
+  --platform ios \
+  --device "iPhone 16" \
+  --provider-os-version 18 \
+  --provider-app ./MyApp.ipa
+
+agent-device connect testmu \
+  --provider-device-type real \
+  --platform android \
+  --device "Pixel 6" \
+  --provider-os-version 14 \
+  --provider-app https://example.com/builds/app.apk
+```
+
+- Real iOS devices are listed by major OS version only: use `--provider-os-version 18`, not `18.0`.
+  The exact-spelling check still applies, so `connect` rejects `18.0` for a real iPhone 16 and lists
+  the versions it offers.
+- Real iOS devices install a signed `.ipa`; a zipped simulator `.app` only runs on simulators.
+  Android takes an `.apk` or `.aab`.
+- Real and virtual devices have separate upload APIs. Pass an `lt://` id that was uploaded for the
+  pool you connect to; when in doubt, pass the local path or URL and let agent-device upload it.
+- `TESTMU_REAL_DEVICE_APP_UPLOAD_ENDPOINT` redirects real-device uploads, as
+  `TESTMU_APP_UPLOAD_ENDPOINT` does for virtual-device uploads.
+- `--provider-device-type` applies only to TestMu AI; BrowserStack, AWS Device Farm, and Limrun
+  refuse it on every route, including `client.leases.allocate()`.
+
+## CLI workflow
+
+```bash
+export LT_USERNAME=...
+export LT_ACCESS_KEY=...
+
+agent-device connect testmu \
+  --platform ios \
+  --device "iPhone 16" \
+  --provider-os-version 18.0 \
+  --provider-app ./MyApp.app.zip \
+  --provider-build "$GITHUB_RUN_ID"
+
+agent-device open com.example.app
+agent-device snapshot -i
+agent-device click 'label="Continue"'
+agent-device close
+agent-device artifacts --json
+agent-device disconnect
+```
+
+For MCP-only use, run `connect` in the same effective state directory before starting
+`agent-device mcp`. MCP exposes `open`, `snapshot`, `click`, `close`, and `artifacts`, but not
+provider `connect` commands.
+
+## Node.js client
+
+The typed client reaches TestMu AI through a lease. Allocate one with the provider selectors, then
+scope a client to it for normal commands. `sessions.close()` ends the hosted session and releases
+the lease; `leases.release()` in `finally` is then a no-op, and still releases the lease when a
+command fails first. The daemon reads `LT_USERNAME` and `LT_ACCESS_KEY` from its environment and
+keeps the values it started with. If your shell holds different ones, the first command that
+allocates a lease, such as `open`, refuses before it creates a session; run
+`agent-device daemon stop` (with the same `--state-dir`) and rerun the command. A shell that sets
+neither variable uses the daemon's. Add `providerDeviceType: 'real'` to `leases.allocate` to run on a real device.
+
+```ts
+import { createAgentDeviceClient } from 'agent-device';
+
+const scope = {
+  tenant: 'testmu',
+  runId: process.env.GITHUB_RUN_ID ?? 'local-run',
+  leaseBackend: 'ios-instance',
+  leaseProvider: 'testmu',
+} as const;
+
+const lease = await createAgentDeviceClient().leases.allocate({
+  ...scope,
+  platform: 'ios',
+  device: 'iPhone 16',
+  providerOsVersion: '18.0',
+  providerApp: 'lt://APP-id',
+  providerProject: 'agent-device',
+  providerBuild: process.env.GITHUB_RUN_ID,
+});
+const client = createAgentDeviceClient({ ...scope, leaseId: lease.leaseId });
+
+let providerSessionId: string | undefined;
+try {
+  await client.apps.open({ app: 'com.example.app' });
+  await client.capture.snapshot({ interactiveOnly: true });
+  await client.interactions.click({ selector: 'label="Continue"' });
+  const closed = await client.sessions.close();
+  providerSessionId = closed.provider?.providerSessionId;
+} finally {
+  await client.leases.release({ ...scope, leaseId: lease.leaseId });
+}
+
+if (providerSessionId) {
+  const artifacts = await client.sessions.artifacts({ provider: 'testmu', providerSessionId });
+  if ('cloudArtifacts' in artifacts) console.log(artifacts.cloudArtifacts);
+}
+```
+
+## Artifacts and troubleshooting
+
+After `close`, TestMu AI can return session video, Appium logs, device logs, network and command
+logs, a screenshot archive, and the App Automation dashboard link. Run `agent-device artifacts --json`, or look up a previous session explicitly:
+
+```bash
+agent-device artifacts <webdriver-session-id> --provider testmu --json
+```
+
+The TestMu AI session id is the WebDriver session id. If artifact lookup is pending immediately
+after `close`, retry it; TestMu AI finalizes video and log URLs after the session ends.
+
+WebDriver, upload, and catalog/session-detail endpoints can be redirected for a staging or private
+TestMu AI deployment with `TESTMU_WEBDRIVER_ENDPOINT`, `TESTMU_APP_UPLOAD_ENDPOINT` (virtual
+devices), `TESTMU_REAL_DEVICE_APP_UPLOAD_ENDPOINT` (real devices), and `TESTMU_API_ENDPOINT`. The
+app listing `connect` uses to check credentials stays fixed at
+`https://manual-api.lambdatest.com/app/data`.
+
+On hosted WebDriver sessions, `fill` checks that the field received focus before it sends keys. If
+it cannot confirm focus, it fails without typing. Use `snapshot -i` to confirm the target, or
+`press <target>` followed by `type <text>`.
 
 
 
