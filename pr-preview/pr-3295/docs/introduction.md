@@ -1,6 +1,6 @@
 # Introduction
 
-`agent-device` is a CLI that lets coding agents verify and QA apps. It runs on iOS, Android, HarmonyOS, tvOS, Android TV, Amazon Vega OS TV apps in the Vega Virtual Device, macOS, Linux desktop targets, and a limited managed web browser. Which interactions, structured UI, evidence, performance, and replay features you get depends on what each target supports.
+`agent-device` is a CLI that lets coding agents verify and QA apps on iOS, Android, HarmonyOS, tvOS, Android TV, Amazon Vega OS TV apps in the Vega Virtual Device, macOS, Linux desktop targets, and a limited managed web browser. Which interactions, structured UI, evidence, performance, and replay features you get depends on what each target supports.
 
 Use it when an agent needs to inspect and operate a running app, not only reason about source code or screenshots.
 
@@ -38,14 +38,10 @@ agent-device close
 
 Snapshots come from the accessibility tree: labels, roles, values, and test IDs are what agents use to choose refs and selectors. Screenshots and videos remain useful as evidence and as a fallback when a screen exposes poor accessibility data, but refs and selectors are more reliable than pixel or OCR guesses.
 
-The installed CLI help matches your installed version. Read the relevant topic for specialized work or when a command is unclear:
+Start with the core workflow guide in the installed CLI help. [Commands](/agent-device/pr-preview/pr-3295/docs/commands.md) lists the other help topics, which agents read for specialized work or when a command is unclear:
 
 ```bash
 agent-device help workflow
-agent-device help debugging
-agent-device help react-devtools
-agent-device help cdp
-agent-device help dogfood
 ```
 
 Use [AI Agent Setup](/agent-device/pr-preview/pr-3295/docs/agent-setup.md) for Cursor, Codex, Claude Code, Windsurf, Cline, Goose, skills, and MCP setup. Use [Commands](/agent-device/pr-preview/pr-3295/docs/commands.md) for detailed command groups and platform behavior.
@@ -56,7 +52,7 @@ Use [AI Agent Setup](/agent-device/pr-preview/pr-3295/docs/agent-setup.md) for C
 
 It complements scripted test frameworks such as Appium, Maestro, Detox, XCTest, and Espresso. Keep those for stable human-authored coverage. Use `agent-device` when an agent needs to explore, reproduce, debug, profile, collect evidence, or record a replay from live app behavior.
 
-The `agent-device mcp` server exposes installed `agent-device` commands as structured MCP tools, so MCP clients can drive devices without a terminal. MCP tools run through the same daemon as the CLI.
+MCP clients can drive devices directly through the `agent-device mcp` server, which exposes the installed commands as structured tools. See [MCP server](/agent-device/pr-preview/pr-3295/docs/agent-setup.md#mcp-server).
 
 ## Next steps
 

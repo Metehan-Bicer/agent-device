@@ -75,7 +75,7 @@ To use AWS Device Farm only through MCP, run `connect` in the same effective sta
 
 ## Use the Node.js client
 
-Configure the client directly when your Node process manages the AWS credentials and selectors:
+Configure the client directly when your Node.js process manages the AWS credentials and selectors:
 
 ```ts
 import { createAgentDeviceClient } from 'agent-device';
@@ -95,7 +95,7 @@ const closed = await client.sessions.close();
 
 ## Get artifacts and troubleshoot
 
-After `close`, AWS Device Farm returns remote-access video and log artifacts once it finalizes them. Run `agent-device artifacts --json`, or look up an earlier session by its ARN:
+After `close`, AWS Device Farm can return remote-access video and log artifacts once it finalizes them. Run `agent-device artifacts --json`, or look up an earlier session by its ARN:
 
 ```bash
 agent-device artifacts <remote-access-session-arn> --provider aws-device-farm --json

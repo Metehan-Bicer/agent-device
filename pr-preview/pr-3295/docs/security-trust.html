@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.9559192c2b.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.de3049c034.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -34,7 +34,7 @@
 <ul>
 <li>The daemon binds to <code>127.0.0.1</code> only, on ephemeral ports, for both its socket and HTTP transports. It is not reachable from the network unless you put your own proxy in front of it.</li>
 <li>Command (RPC), upload, artifact-download, and <code>/admin/human-control/*</code> requests must present a token that the daemon generates fresh on each start (24 random bytes). The only unauthenticated endpoint is <code>GET /health</code>, which returns only liveness, package and protocol version, instance ID, and host CPU architecture; like the rest of the server, it is reachable only over loopback. The token is stored in <code>daemon.json</code> inside the daemon state directory (<code>~/.agent-device</code> for packaged installs; source checkouts use a worktree-scoped directory under <code>~/.agent-device/dev/</code>) with <code>0600</code> permissions. Anyone who can read that file already has your user account.</li>
-<li>A client reuses a running daemon only when the daemon runs the same version and the same code. Two installs of the same published version share one daemon. Any other mismatch, such as a source checkout against an install, restarts the daemon instead of running code the client cannot identify. The code check compares file sizes and timestamps, not contents, so it does not detect an install whose files were hand-replaced under the same version.</li>
+<li>A client reuses a running daemon only when the daemon runs the same version and the same code. Two installs of the same published version share one daemon. An older client refuses to replace a reachable daemon on a newer version, so it does not disrupt that daemon&#x27;s sessions; upgrade the client instead. Any other mismatch, such as a source checkout against an install, restarts the daemon instead of running code the client cannot identify. The code check compares file sizes and timestamps, not contents, so it does not detect an install whose files were hand-replaced under the same version.</li>
 <li>Artifact uploads are size-capped, filenames are sanitized, and archive extraction rejects path-traversal entries. Artifact downloads resolve through server-side IDs, never client-supplied paths.</li>
 <li><code>install-from-source</code> protects the daemon host while it downloads and extracts the artifact; it does not vouch for the app inside. An app installed and launched on an iOS simulator runs as a process on the host Mac, so treat permission to send install requests as permission to run code on that Mac.</li>
 </ul>

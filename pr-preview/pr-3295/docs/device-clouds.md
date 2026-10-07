@@ -1,4 +1,4 @@
-# Device Clouds & Farms
+# Device Clouds
 
 Use a device cloud or farm when an agent needs to drive a hosted mobile device without an interactive login. Pick the provider whose account and devices you use:
 

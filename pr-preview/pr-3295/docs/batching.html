@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.9559192c2b.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.de3049c034.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -58,6 +58,9 @@ the next sequence of actions.</p>
 <li>Steps written as <code>positionals</code>/<code>flags</code> are rejected (that shape was removed in 0.21). Rewrite each step with structured input, for example <code>{&quot;command&quot;:&quot;open&quot;,&quot;input&quot;:{&quot;app&quot;:&quot;settings&quot;,&quot;platform&quot;:&quot;ios&quot;}}</code>.</li>
 <li><code>batch</code> and <code>replay</code> steps can&#x27;t be nested inside a batch.</li>
 <li><code>--on-error stop</code> is the only error mode: the batch stops at the first failing step.</li>
+<li>A batch runs at most 100 steps by default. Pass <code>--max-steps &lt;n&gt;</code> to raise or lower the limit, up to 1000.</li>
+<li>A step without <code>platform</code> uses the batch&#x27;s <code>--platform</code>. Session lock defaults don&#x27;t override it.</li>
+<li>Steps use the same session binding and <a href="/agent-device/pr-preview/pr-3295/docs/sessions#lock-a-named-session-to-a-device" class="rp-link">session lock mode</a> as the <code>batch</code> command itself.</li>
 </ul>
 <h2 class="rp-toc-include" id="response-shape"><a href="#response-shape" class="rp-header-anchor rp-link" aria-hidden="true">#</a>Response shape</h2>
 <p>Success:</p>

@@ -78,8 +78,8 @@ hosted session.
 - `--provider-network-profile`, `--provider-custom-network`, and `--provider-no-resign-app` are
   BrowserStack-only. `connect testmu` and TestMu AI session creation fail with the flag name
   instead of ignoring them.
-- agent-device turns on session video and device logs for every session, so `artifacts` always has
-  something to return.
+- agent-device requests session video and device logs on every session, so `artifacts` has something
+  to return once TestMu AI makes them available.
 
 ## Run on real devices
 
@@ -137,8 +137,8 @@ agent-device disconnect
 ```
 
 To use TestMu AI only through MCP, run `connect` in the same effective state directory before you
-start `agent-device mcp`. MCP exposes `open`, `snapshot`, `click`, `close`, and `artifacts`, but not
-provider `connect` commands.
+start `agent-device mcp`. MCP exposes device commands such as `open`, `snapshot`, `close`, and
+`artifacts`, but not provider `connect` commands.
 
 ## Use the Node.js client
 
