@@ -30,6 +30,7 @@ import {
   absenceUnreadableError,
 } from '@agent-device/selectors/absence-observation-errors';
 import { resolveAbsenceObservation } from '@agent-device/selectors/absence-observation-resolution';
+import { observationReadFailure } from './selector-observation-failure.ts';
 
 export type IsCommandOptions = CommandContext &
   SelectorSnapshotOptions & {
@@ -151,17 +152,15 @@ async function resolveAssertedPredicate(
     },
   );
   if (outcome.kind !== 'target') {
-    throw new AppError(
-      'COMMAND_FAILED',
-      formatSelectorFailure(selectorExpression, [], { unique: true }),
-      {
-        command: 'is',
-        reason: INTERACTION_ERROR_REASONS.selectorNotFound,
+    throw observationReadFailure({
+      outcome,
+      selectorExpression,
+      command: 'is',
+      details: {
         predicate: predicate,
         selector: selectorExpression,
-        hint: selectorFailureHint([]),
       },
-    );
+    });
   }
   const result = evaluateIsPredicate({
     predicate,

@@ -50,7 +50,7 @@ import {
   orderByViewportPosition,
 } from '@agent-device/selectors/target-evidence';
 import { resolveRecordedTarget } from '@agent-device/selectors';
-import { resolveUnverifiedWrapperControl } from '@agent-device/selectors/interaction-targeting';
+import { resolveElementReportedTwice } from '@agent-device/selectors/interaction-targeting';
 import type { TargetAnnotationV1 } from '@agent-device/contracts/replay';
 import type { ReplayDivergenceTargetBindingKind } from '@agent-device/contracts/divergence';
 
@@ -219,10 +219,11 @@ function resolveSelectorTargetMatches(
   }
   // A refusal is not always a changed screen. The rows that verify without
   // disambiguation — `is <predicate>` and `get attrs` — dispatch through a
-  // pipeline that resolves one control reported by its own accessibility wrapper
-  // to the control, so naming no winner here reports a divergence for a screen
+  // pipeline that resolves one element reported twice (a control under its own
+  // accessibility wrapper, or a text reporter and its accessibility mirror) to
+  // that element, so naming no winner here reports a divergence for a screen
   // that did not change.
-  const control = resolveUnverifiedWrapperControl(nodes, resolution.matchedNodes);
+  const control = resolveElementReportedTwice(nodes, resolution.matchedNodes);
   return {
     matchedNodes: [...resolution.matchedNodes],
     winnerRef: control?.ref ?? '',

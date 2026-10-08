@@ -1,8 +1,6 @@
 import {
   FIND_VALUE_REQUIRED_MESSAGE,
   findBestMatchesByLocator,
-  formatSelectorFailure,
-  selectorFailureHint,
   buildSelectorChainForNode,
   parseFindSelectorExpression,
   type FindAction,
@@ -36,6 +34,7 @@ import {
 } from './selector-read-shared.ts';
 import { findSnapshotScope, sparseSelectorSnapshotError } from './selector-read-utils.ts';
 import { deriveSelectorCapturePolicy } from './selector-capture-policy.ts';
+import { observationReadFailure } from './selector-observation-failure.ts';
 import { createWaitPolling, type WaitPollDeadline, waitTimeoutError } from './wait-polling.ts';
 import {
   createSelectorWaitCommands,
@@ -380,13 +379,11 @@ async function resolveSelectorNode(
     params.hooks,
   );
   if (outcome.kind !== 'target') {
-    throw new AppError(
-      'COMMAND_FAILED',
-      formatSelectorFailure(params.selector, [], { unique: true }),
-      {
-        hint: selectorFailureHint([]),
-      },
-    );
+    throw observationReadFailure({
+      outcome,
+      selectorExpression: params.selector,
+      command: 'get',
+    });
   }
   return {
     capture,

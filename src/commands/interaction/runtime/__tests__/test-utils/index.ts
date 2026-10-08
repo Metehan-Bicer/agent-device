@@ -9,7 +9,11 @@ import {
 } from '../../../../../runtime.ts';
 import { ref } from '../../selector-read-utils.ts';
 import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
-import { UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES } from '@agent-device/selectors/interaction-targeting-fixtures';
+import {
+  RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES,
+  RN_TEXT_ECHO_NODES,
+  UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES,
+} from '@agent-device/selectors/interaction-targeting-fixtures';
 
 export function selectorSnapshot(): SnapshotState {
   return makeSnapshotState([
@@ -458,6 +462,20 @@ export function ambiguousSelectorReadSnapshot(): SnapshotState {
  */
 export function unverifiedWrapperChainReadSnapshot(): SnapshotState {
   return makeSnapshotState(UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES);
+}
+
+/**
+ * React Native text reported twice by a live regular iOS snapshot
+ * (`interaction-targeting.fixtures`): the uniqueness reads answer about the text
+ * reporter instead of refusing a line that is on screen (#2870).
+ */
+export function rnTextEchoReadSnapshot(): SnapshotState {
+  return makeSnapshotState(RN_TEXT_ECHO_NODES);
+}
+
+/** The same label twice in distinct subtrees: nothing collapses here (#2870). */
+export function rnTextEchoDistinctSubtreeReadSnapshot(): SnapshotState {
+  return makeSnapshotState(RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES);
 }
 
 /**

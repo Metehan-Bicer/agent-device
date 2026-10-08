@@ -5,6 +5,9 @@ import { SELECTOR_RESOLUTION_POLICIES } from '@agent-device/selectors';
 import { makeSnapshotState } from './snapshot-geometry.fixtures.ts';
 import {
   ELEMENT14_DISTINCT_SUBTREE_NODES,
+  RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES,
+  RN_TEXT_ECHO_NODES,
+  RN_TEXT_ECHO_OFFSET_RECT_NODES,
   TWO_ACTIONABLE_WRAPPER_CHAIN_NODES,
   UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES,
 } from './interaction-targeting.fixtures.ts';
@@ -313,6 +316,89 @@ test('the uniqueness rows still refuse matches that are not one wrapper chain', 
       );
       assert.equal(outcome.kind, 'ambiguous', `${name} / ${row}`);
     }
+  }
+});
+
+/**
+ * #2870: React Native reports one authored `<Text>` twice on a regular iOS
+ * snapshot — the paragraph view plus its accessibility-element child, identical
+ * label, identical rect, both carrying a hittability fact (which is why the
+ * hittability-door wrapper rule above cannot reach this pair). The uniqueness rows
+ * answer about the reporter: the node `snapshot -i` lists and the node whose
+ * testID an `id=` selector names.
+ */
+const RN_TEXT_ECHO_TREE = RN_TEXT_ECHO_NODES;
+const RN_TEXT_ECHO_SELECTOR = 'label="Catalog scroll: top"';
+
+test('the uniqueness rows collapse React Native text reported twice', async () => {
+  const nodes = nodesOf(RN_TEXT_ECHO_TREE);
+  for (const row of ['readUnique', 'cropTarget'] as const) {
+    const outcome = await resolveSelectorPipeline(
+      SELECTOR_PIPELINE_POLICIES[row],
+      nodes,
+      RN_TEXT_ECHO_SELECTOR,
+      MATCH,
+    );
+    assert.equal(outcome.kind, 'target', row);
+    if (outcome.kind !== 'target') continue;
+    // The outer reporter keeps the identifier the app authored; the mirror adds no fact.
+    assert.equal(outcome.node.index, 0, row);
+    assert.equal(outcome.node.identifier, 'catalog-scroll-state', row);
+    assert.equal(outcome.matches, 2, row);
+    assert.deepEqual(
+      outcome.matchedNodes.map((node) => node.role),
+      ['RCTParagraphComponentView', 'RCTAccessibilityElement'],
+      row,
+    );
+  }
+});
+
+/**
+ * Each negative changes exactly ONE structural fact of the pair above while every
+ * label and rect still matches, so a rule reading the description rather than the
+ * structure would answer and these tests would notice.
+ */
+test('the uniqueness rows refuse a text pair that is not one reporter and its mirror', async () => {
+  const cases = [
+    [
+      'same label in distinct subtrees',
+      nodesOf(RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES),
+      RN_TEXT_ECHO_SELECTOR,
+    ],
+    [
+      'same label repeated at a different rect',
+      nodesOf(RN_TEXT_ECHO_OFFSET_RECT_NODES),
+      RN_TEXT_ECHO_SELECTOR,
+    ],
+  ] as const;
+  for (const [name, nodes, selector] of cases) {
+    for (const row of ['readUnique', 'cropTarget'] as const) {
+      const outcome = await resolveSelectorPipeline(
+        SELECTOR_PIPELINE_POLICIES[row],
+        nodes,
+        selector,
+        MATCH,
+      );
+      assert.equal(outcome.kind, 'ambiguous', `${name} / ${row}`);
+    }
+  }
+});
+
+/**
+ * The absence negative, whose outcome a collapsed read must never be confused
+ * with: the selector that matches nothing is `none`, and it stays `none` even
+ * where a collapse-capable tree is one label away from matching.
+ */
+test('a selector matching nothing on the text-echo tree resolves to none, not a collapse', async () => {
+  const nodes = nodesOf(RN_TEXT_ECHO_TREE);
+  for (const row of ['readUnique', 'cropTarget'] as const) {
+    const outcome = await resolveSelectorPipeline(
+      SELECTOR_PIPELINE_POLICIES[row],
+      nodes,
+      'label="Catalog scroll: bottom"',
+      MATCH,
+    );
+    assert.equal(outcome.kind, 'none', row);
   }
 });
 
