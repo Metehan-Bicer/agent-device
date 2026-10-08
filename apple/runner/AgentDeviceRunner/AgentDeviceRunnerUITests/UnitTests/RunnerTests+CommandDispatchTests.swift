@@ -690,3 +690,132 @@ extension RunnerTests {
   }
 }
 #endif
+
+#if AGENT_DEVICE_RUNNER_UNIT_TESTS && os(macOS)
+extension RunnerTests {
+  /// Part of every macOS install, never the runner or the test host, and cheap to leave terminated.
+  /// Its windows sit over or behind the test host's own, which is exactly the desktop shape #3254
+  /// describes: the user's frontmost app is a different app from the session app.
+  private static let macBackgroundTargetBundleId = "com.apple.systempreferences"
+  private static let macForegroundStealBundleId = "com.apple.finder"
+
+  /// Brings Settings up, then hands the foreground to Finder, and waits until Settings reports
+  /// itself background. `activate()` on another app is how a desktop backgrounds an app without
+  /// quitting it, so this leaves the state a read must answer — not a launchable absence.
+  @MainActor
+  private func startMacTargetAndLoseTheForeground() throws -> XCUIApplication {
+    let target = XCUIApplication(bundleIdentifier: Self.macBackgroundTargetBundleId)
+    target.launch()
+    XCTAssertTrue(target.waitForExistence(timeout: appExistenceTimeout))
+    _ = XCUIApplication(bundleIdentifier: Self.macForegroundStealBundleId).activate()
+    XCTAssertTrue(
+      target.wait(for: .runningBackground, timeout: 10),
+      "Finder must take the foreground and the target must settle background before the read answers from it"
+    )
+    return target
+  }
+
+  /// The #3254 fix on the policy axis: on macOS a `.existingApp` read of a session app that is
+  /// running behind other windows is served from where it sits. Three things must be true at once:
+  /// the command is prepared against the app it names, no activation fact is booked (the response
+  /// therefore discloses no repair because none happened), and the app is still background when the
+  /// read is done — the user's frontmost app never changed. Covers the user-level read and the two
+  /// leading reads an interaction carries (gesture viewport, selector resolution), the same shapes
+  /// the iOS surface arm pins. Deleting the macOS arm of `.existingApp` fails every row.
+  @MainActor
+  func testMacReadOfABackgroundAppIsServedInBackgroundWithoutActivating() throws {
+    let target = try startMacTargetAndLoseTheForeground()
+    let bundleId = Self.macBackgroundTargetBundleId
+    defer {
+      invalidateCachedTarget(reason: "unit_test_cleanup")
+      pendingTargetActivation = nil
+      target.terminate()
+    }
+    for request in [
+      #"{"command":"snapshot","commandId":"read","appBundleId":"\#(bundleId)"}"#,
+      #"{"command":"gestureViewport","commandId":"read","appBundleId":"\#(bundleId)"}"#,
+      #"{"command":"querySelector","selectorKey":"label","selectorValue":"General","commandId":"read","appBundleId":"\#(bundleId)"}"#
+    ] {
+      invalidateCachedTarget(reason: "unit_test_setup")
+      pendingTargetActivation = nil
+      let command = try runnerCommandFixture(request)
+
+      guard case .context(let prepared) = prepareActiveCommandContext(command: command) else {
+        return XCTFail("\(request) must be served, not refused")
+      }
+      XCTAssertEqual(
+        prepared.app.state,
+        .runningBackground,
+        "\(request) must be served against the background app it names"
+      )
+      XCTAssertNil(pendingTargetActivation, "\(request) may not book an activation fact")
+      XCTAssertEqual(
+        target.state,
+        .runningBackground,
+        "\(request) may not take the user's frontmost app away"
+      )
+    }
+  }
+
+  /// The scope limit that keeps this from being a blanket no-activate rule: an interaction against
+  /// the same background app still comes forward through the same preparation, because on macOS the
+  /// XCTest path drives events into the foreground window and a background click would land on
+  /// whatever window sits on top. This is the same call with `.mayLaunch`; the two tests above and
+  /// this one together pin the boundary the policy axis draws.
+  @MainActor
+  func testMacInteractionOnABackgroundAppStillActivates() throws {
+    let target = try startMacTargetAndLoseTheForeground()
+    defer {
+      invalidateCachedTarget(reason: "unit_test_cleanup")
+      pendingTargetActivation = nil
+      target.terminate()
+    }
+    invalidateCachedTarget(reason: "unit_test_setup")
+    pendingTargetActivation = nil
+    let command = try runnerCommandFixture(
+      #"{"command":"tap","x":10,"y":10,"commandId":"tap-bg","appBundleId":"\#(Self.macBackgroundTargetBundleId)"}"#
+    )
+
+    guard case .context = prepareActiveCommandContext(command: command) else {
+      return XCTFail("the tap must be prepared")
+    }
+    XCTAssertNotNil(
+      pendingTargetActivation,
+      "an interaction on a background app must still book its activation"
+    )
+    XCTAssertEqual(target.state, .runningForeground, "the tap must run against the foreground app")
+  }
+
+  /// Stopped apps behave exactly as they did before this axis read macOS (#3254 correction): a read
+  /// of a not-running session app still goes through the activating route and the launch it performs,
+  /// because macOS has no refusal there and callers rely on `open`-then-read working. `snapshot` is
+  /// the read whose policy the background change touched, so it is the read that proves the change is
+  /// scoped to the running app only: the app comes up, the activation fact is booked, and nothing is
+  /// refused. Making `macReadMayBeServedInBackground` answer `.notRunning` too would turn this
+  /// context into a refusal and fail on the first assertion.
+  @MainActor
+  func testMacReadOfANotRunningAppStillLaunchesIt() throws {
+    let target = XCUIApplication(bundleIdentifier: Self.macBackgroundTargetBundleId)
+    target.terminate()
+    invalidateCachedTarget(reason: "unit_test_setup")
+    pendingTargetActivation = nil
+    defer {
+      invalidateCachedTarget(reason: "unit_test_cleanup")
+      pendingTargetActivation = nil
+      target.terminate()
+    }
+    let command = try runnerCommandFixture(
+      #"{"command":"snapshot","commandId":"read","appBundleId":"\#(Self.macBackgroundTargetBundleId)"}"#
+    )
+
+    guard case .context = prepareActiveCommandContext(command: command) else {
+      return XCTFail("a read of a stopped app must keep the launch route it has always had")
+    }
+    XCTAssertNotEqual(target.state, .notRunning, "the stopped app must come up as it did before")
+    XCTAssertNotNil(
+      pendingTargetActivation,
+      "the command that launched the app discloses the activation it paid for"
+    )
+  }
+}
+#endif

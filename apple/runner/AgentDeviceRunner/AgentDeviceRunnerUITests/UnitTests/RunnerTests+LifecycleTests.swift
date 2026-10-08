@@ -117,6 +117,43 @@ extension RunnerTests {
 }
 #endif
 
+#if AGENT_DEVICE_RUNNER_UNIT_TESTS && os(macOS)
+extension RunnerTests {
+  /// Pins every state the macOS screenshot raise condition reads (#3254): only an app that is not
+  /// already foreground is ever raised, and only a window-level grab needs it — a `--fullscreen`
+  /// capture of a running app answers from any foreground. A stopped app keeps its standing answer in
+  /// both shapes, because there the activation is also the launch it has always performed; the
+  /// change is that full-screen stops paying a raise for a RUNNING app its pixels never needed. The
+  /// screenshot call site reads this same function, so a drifted condition is a red row rather than a
+  /// silent behavior change.
+  func testMacAppCaptureNeedsRaiseIsWindowLevelAndBackgroundOnly() {
+    let foreground = XCUIApplication.State.runningForeground
+    let background = XCUIApplication.State.runningBackground
+    let notRunning = XCUIApplication.State.notRunning
+    // Rows are literal expectations, not the condition recomputed: a drifted condition must land as
+    // a red row here, not move both sides of the comparison together.
+    let table: [(fullscreen: Bool?, state: XCUIApplication.State, expected: Bool)] = [
+      (nil, foreground, false),
+      (nil, background, true),
+      (nil, notRunning, true),
+      (false, foreground, false),
+      (false, background, true),
+      (false, notRunning, true),
+      (true, foreground, false),
+      (true, background, false),
+      (true, notRunning, true),
+    ]
+    for row in table {
+      XCTAssertEqual(
+        macAppCaptureNeedsRaise(fullscreen: row.fullscreen, targetState: row.state),
+        row.expected,
+        "fullscreen=\(String(describing: row.fullscreen)) state=\(row.state.rawValue)"
+      )
+    }
+  }
+}
+#endif
+
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
 extension RunnerTests {
   @MainActor

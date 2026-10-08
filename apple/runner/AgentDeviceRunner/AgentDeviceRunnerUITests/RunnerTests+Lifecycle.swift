@@ -284,6 +284,18 @@ extension RunnerTests {
     return false
   }
 
+  /// Whether a macOS app-targeted capture must bring the app forward before answering, and so run
+  /// the wait that settles the raise (#3254). Three exclusions, each a state or shape where the
+  /// pixels need nothing brought forward: an app already in the foreground has nothing to raise, and
+  /// a `--fullscreen` capture of a running app is a whole-display grab that `XCUIScreen.main`
+  /// answers whichever app owns the foreground, so raising one for it only takes the user's own app
+  /// away. A stopped app keeps its standing behavior either way: there the activation is also the
+  /// launch it has always performed, which this change leaves untouched.
+  func macAppCaptureNeedsRaise(fullscreen: Bool?, targetState: XCUIApplication.State) -> Bool {
+    guard targetState != .runningForeground else { return false }
+    return fullscreen != true || targetState == .notRunning
+  }
+
   @MainActor
   func canUseFastForegroundAppGuard(
     activeApp: XCUIApplication,

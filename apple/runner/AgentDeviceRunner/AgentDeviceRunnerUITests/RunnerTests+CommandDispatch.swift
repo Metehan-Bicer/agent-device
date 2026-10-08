@@ -536,12 +536,22 @@ extension RunnerTests {
 #else
       // The platform exception, written once: `SystemSurfaceHostRegistry` registers no hosts off iOS,
       // so nothing is ever served in place there and such a command keeps the activation route this
-      // axis found it on.
+      // axis found it on. The macOS host never sends one of this arm's commands here: `alert` answers
+      // through the macOS helper (`runAppleAlert`'s host split) and `action-button` is refused by the
+      // owner's Action Button fact (`hasAppleActionButton`) before dispatch, so no macOS request can
+      // be activated from this arm, and only the tvOS and visionOS runners reach it off iOS.
       return prepareActivatedTarget(command: command)
 #endif
     case .existingApp:
       // No request-dependent bypass here: it decides by querying the cached target's state, and a
       // command that may bring nothing forward has nothing for it to settle.
+#if os(macOS)
+      if macReadMayBeServedInBackground(command) {
+        // Served in place with no binding, the same shape the iOS `.presentedSurface` arm takes:
+        // the next command that needs the app forward pays for its own activation.
+        return .context(ActiveCommandContext(app: resolveAppWithoutActivation(command: command)))
+      }
+#endif
       return prepareActivatedTarget(command: command)
     case .mayLaunch:
       if shouldSkipAppActivationPreflight(command) {
@@ -774,5 +784,17 @@ extension RunnerTests {
       return boundApp
     }
     return XCUIApplication(bundleIdentifier: bundleId)
+  }
+
+  /// Whether a macOS `.existingApp` read may be served from the app exactly where it sits: the
+  /// request names an app that is running but behind other windows. On a desktop the foreground
+  /// repair is not a no-op for the user — it takes their frontmost app away for a command that only
+  /// asked to look, which is what #3254 reports. The answer comes from `state`, which never launches,
+  /// so a stopped or unknown app keeps the standing route untouched, including the launch that route
+  /// performs; only the raise of an already-running app is in question here.
+  @MainActor
+  func macReadMayBeServedInBackground(_ command: Command) -> Bool {
+    guard let bundleId = command.appBundleId?.trimmedNonEmpty else { return false }
+    return XCUIApplication(bundleIdentifier: bundleId).state == .runningBackground
   }
 }
