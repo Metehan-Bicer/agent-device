@@ -1,6 +1,7 @@
 # Snapshots
 
-Snapshots provide a structured view of the UI and generate current-screen refs.
+Take a snapshot to read the UI as a structured tree and get refs (`@e1`, `@e2`, …) for the elements on
+the current screen.
 
 ```bash
 agent-device snapshot                    # Full accessibility tree
@@ -9,64 +10,57 @@ agent-device snapshot -d 3               # Limit depth to 3 levels
 agent-device snapshot -s "Contacts"      # Scope to label/identifier
 agent-device snapshot -i -d 5            # Combine options
 agent-device snapshot --actions          # Name custom actions merged into elements (iOS simulator)
-agent-device diff snapshot               # Preferred structural diff vs previous session baseline
-agent-device snapshot --diff             # Alias for the same diff operation
+agent-device diff snapshot               # Structural diff vs previous session baseline
 ```
 
-| Option           | Description                                                                       |
-| ---------------- | --------------------------------------------------------------------------------- |
-| `--diff`         | Structural diff against the previous session baseline (alias for `diff snapshot`) |
-| `-i`             | Interactive-only output                                                           |
-| `-d <depth>`     | Limit tree depth                                                                  |
-| `-s <scope>`     | Scope to label or identifier                                                      |
-| `--raw`          | Full provider tree instead of the visible-first agent view                        |
-| `--actions`      | Name the custom accessibility actions merged inside an element (iOS simulator)    |
-| `--force-full`   | Re-emit the full tree even when it is unchanged since the previous snapshot       |
-| `--timeout <ms>` | Maximum wall-clock time for the snapshot command                                  |
+| Option           | Description                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| `--diff`         | Structural diff against the previous session baseline (alias for `diff snapshot`)    |
+| `-i`             | Interactive-only output                                                              |
+| `-d <depth>`     | Limit tree depth                                                                     |
+| `-s <scope>`     | Scope to label, value, identifier, or `@ref` ([Scope a snapshot](#scope-a-snapshot)) |
+| `--raw`          | Full provider tree instead of the visible-first agent view                           |
+| `--actions`      | Name the custom accessibility actions merged inside an element (iOS simulator)       |
+| `--force-full`   | Re-emit the full tree even when it is unchanged since the previous snapshot          |
+| `--timeout <ms>` | Maximum wall-clock time for the snapshot command                                     |
 
-`--actions` constraints:
+`--actions` limits:
 
-- iOS simulators only. Physical iOS devices, macOS, and Android targets reject the flag.
+- Works on iOS simulators only. Physical iOS devices, macOS, and Android targets reject the flag.
 - It names the affordances an element merged away (iOS `UIAccessibilityCustomAction`, React Native
   `accessibilityActions`), so a card whose reply/options controls are not separate elements still
   lists them.
-- The names are for planning and discovery, not invocation. There is no API to trigger one: reach
-  the affordance through the element's detail screen, through the same control exposed as a labeled
-  element elsewhere, or by coordinates from its rect.
-- Each merged element costs one accessibility round trip, so the pass is opt-in and bounded. When it
-  cannot read every candidate, the response says how many it read — an absent list on an unread
-  element is not evidence that it has none.
-- Mutually exclusive with `--raw`. Custom actions are only readable through the private-AX capture
-  path, which the raw diagnostic strategy does not take, so the pair is rejected as `INVALID_ARGS`
-  before any device work — on the CLI, the Node client, and MCP alike. Choose one or the other.
+- You can read the names but not trigger them. To use an affordance, go through the element's detail
+  screen, find the same control exposed as a labeled element elsewhere, or tap by coordinates from
+  its rect.
+- Each merged element costs one accessibility round trip, so the pass is opt-in and capped. When it
+  cannot read every candidate, the response says how many it read. A missing list on an unread
+  element does not mean the element has no actions.
+- You can't combine it with `--raw`. The CLI, the Node client, and MCP all reject the pair with
+  `INVALID_ARGS` before touching the device.
 
-## Efficient snapshot usage
+## Keep snapshots small and current
 
-- iOS and Android share the same mobile snapshot contract: visible-first output, actionable-now refs, and hidden list content communicated via discovery hints.
-- Default to `snapshot -i` for agent loops.
-- Repeated unfiltered Android snapshots with unchanged presented content and bounds return a compact acknowledgement. `-i`, `-d`, `-s`, `--json`, and `--raw` retain full output. Use `--force-full` to re-emit the tree explicitly.
-- Default snapshot text is an agent-facing, token-efficient view for planning and targeting actions. It is visible-first and may collapse helper/accessibility noise; use `--raw` or `--json` when you need the full provider tree.
-- Off-screen interactive content is collapsed into discovery summaries such as `[off-screen below] 3 interactive items: "Privacy", "Battery", "About"`.
-- If a target only appears in an off-screen summary, use `scroll <direction>` and re-snapshot until the target becomes visible.
-- When container ownership is known, hidden content is shown inline under the visible scroll/list container, for example `[content above scroll-area hidden]` or `[content below list hidden]`.
-- Those summaries intentionally show only a few labels for token efficiency. Use `snapshot --raw` when you need the full off-screen tree instead of the summary.
-- Add `-s "<label>"` (or `-s @ref`) to keep results screen-local.
-- Add `-d <depth>` when you only need upper hierarchy layers.
-- If `snapshot -i -d <n>` says the interactive output is empty at that depth, retry once without `-d` before taking more shallow snapshots.
-- Re-snapshot after any UI mutation before reusing refs.
-- On Android after navigation or submit, snapshot capture retries suspicious trees for a short post-action deadline and `@ref` interactions refresh while that freshness window is active. If `snapshot -i` still disagrees with the visible screen, trust `screenshot`, wait briefly, then take one fresh snapshot instead of looping stale snapshots.
-- For automation runs affected by Android animation churn, use `settings animations off` as an opt-in stabilizer and restore with `settings animations on` after the run.
-- On a device cloud the tree is read by the provider's driver, so a screen that never goes still — a looping video, a live ticker, continuous animation — gives that read no quiet moment and it can run out of its budget while `screenshot` still returns. The read is cancelled with the request that asked for it, so agent-device stops waiting on it and stops holding the session open for it; the driver's own walk can continue on the provider, where it may still occupy that session's queue. Two dead ends: the read carries its own budget, so a larger `--timeout` cannot lengthen it, and `settings animations` is not implemented on hosted WebDriver sessions.
-- Use `diff snapshot` between mutations to validate structural changes with lower output volume.
-- Use `snapshot --diff` when you discover the feature from snapshot help, but keep `diff snapshot` as the default exploration command.
-- Keep `--raw` for troubleshooting only when you need the full tree instead of visible-first output.
+- iOS and Android produce the same kind of snapshot: visible elements first, refs you can act on
+  now, and hints that point to hidden list content.
+- Use `snapshot -i` by default in agent loops.
+- On Android, repeating an unfiltered snapshot when nothing on screen changed (content or bounds) returns a short acknowledgement instead of the tree. `-i`, `-d`, `-s`, `--json`, and `--raw` always print full output. Add `--force-full` to get the full tree anyway.
+- The default text output is a compact view for planning and targeting actions. It lists visible elements first and may collapse helper and accessibility noise. Use `--raw` or `--json` when you need the full provider tree. Keep `--raw` for troubleshooting, such as when you need the full off-screen tree that summaries abbreviate.
+- Off-screen interactive content is collapsed into summaries that show only a few labels, such as `[off-screen below] 3 interactive items: "Privacy", "Battery", "About"`.
+- If your target only appears in an off-screen summary, run `scroll <direction>` and snapshot again until it is visible.
+- When agent-device knows which container holds the hidden content, it shows the summary inside that scroll or list container, for example `[content above scroll-area hidden]` or `[content below list hidden]`.
+- Add `-s "<label>"` (or `-s @ref`) to limit output to one part of the screen. See [Scope a snapshot](#scope-a-snapshot).
+- Add `-d <depth>` when you only need the upper layers of the hierarchy.
+- If `snapshot -i -d <n>` reports no interactive elements at that depth, retry once without `-d` instead of taking more shallow snapshots.
+- Take a new snapshot after any UI change before you reuse refs.
+- On Android, right after navigation or a submit, snapshot capture retries trees that look stale for a short time, and `@ref` interactions refresh during that window. If `snapshot -i` still disagrees with the screen, trust `screenshot`, wait briefly, and take one fresh snapshot instead of looping on stale ones.
+- If Android animations make runs flaky, run `settings animations off` before the run and `settings animations on` after it.
+- On a device cloud, the provider's driver reads the tree. A screen that never goes still — a looping video, a live ticker, continuous animation — can make that read run out of time while `screenshot` still works. When the request is cancelled, agent-device stops waiting for the read, but the daemon and session stay alive, and the provider may keep reading and hold up that session's queue. A larger `--timeout` does not extend the read, and `settings animations` is not available on hosted WebDriver sessions.
+- Run `diff snapshot` between UI changes to check what changed with less output. The first run
+  records a baseline (`baselineInitialized: true` in JSON). Later runs print unified-style lines
+  (`+` added, `-` removed, unchanged context) and update the baseline after each call.
 
-`diff snapshot` and `snapshot --diff` behavior:
-
-- First run initializes baseline (`baselineInitialized: true` in JSON).
-- Later runs return unified-style lines (`+` added, `-` removed, unchanged context) and update baseline after each call.
-
-## Example output:
+## Example output
 
 ```bash
 agent-device snapshot -i
@@ -90,64 +84,131 @@ Every node in `snapshot --json` output carries `kind`, next to `type` when the p
 
 - `type` is the raw platform class, verbatim: `Button` / `StaticText` from XCUI, `android.widget.Button`
   from the Android hierarchy. It differs by platform for the same UI role.
-- `kind` is the platform-neutral classification shown in brackets on the text line above
-  (`button`, `text-field`, `text`, `switch`, `link`, …), computed by the same function on every
-  platform, backend, and projection (`snapshot` and `snapshot -i` alike) — so text and JSON never
-  disagree about a node's role.
+- `kind` is the platform-neutral role shown in brackets in text output (`button`, `text-field`,
+  `text`, `switch`, `link`, …). It is the same on every platform and backend, in both `snapshot`
+  and `snapshot -i`, so text and JSON output always agree on a node's role.
 
 ```json
 { "ref": "e4", "type": "android.widget.Button", "kind": "button", "label": "Send code" }
 { "ref": "e40", "type": "Button", "role": "UIButton", "kind": "button", "label": "Continue to catalog" }
 ```
 
-On iOS, `role` (when present) is the native AX class (`UIButton`) — a different fact carried only
-on iOS nodes; `kind` is the cross-platform one, present on every node on every platform.
+On iOS, `role` (when present) is the native AX class (`UIButton`), carried only on iOS nodes.
+`kind` is the cross-platform role, present on every node on every platform.
 
-`role=` selectors (and `find role=...`) match `kind`'s vocabulary: a node whose `kind` is `text`
-or `text-field` always matches `role=text` / `role=text-field` — the bracketed word a snapshot
+`role=` selectors (and `find role=...`) match the `kind` vocabulary: a node whose `kind` is `text`
+or `text-field` always matches `role=text` / `role=text-field`, the bracketed word a snapshot
 shows for that node
-([#3021](https://github.com/callstack/agent-device/issues/3021)). Spellings from before that
-reconciliation — the raw leaf classes `role=statictext`, `role=edittext`, `role=textview`,
-`role=searchfield`, and the rest of the leaf vocabulary — stay accepted during a deprecation window,
-each on the very nodes that carried that class (so `role=linearlayout` still never matches a
-`FrameLayout` row the way a shared `group` alias would). Prefer the `kind` spelling in new
-selectors; the leaf aliases are deprecated and will be removed in a future breaking release.
+([#3021](https://github.com/callstack/agent-device/issues/3021)). Older spellings — the raw leaf
+classes `role=statictext`, `role=edittext`, `role=textview`, `role=searchfield`, and the rest of the
+leaf vocabulary — still match during a deprecation window, each only on nodes that carried that
+class (so `role=linearlayout` never matches a `FrameLayout` row the way a shared `group` alias
+would). Use the `kind` spelling in your selectors; the leaf aliases are deprecated and will be
+removed in a future breaking release.
+
+## Scope a snapshot
+
+```bash
+agent-device snapshot -i -s "Shipping address"
+agent-device snapshot -s @e12
+```
+
+- `-s <text>` returns the subtree of the first node, in document order, whose label, value, or
+  identifier contains the text (case-insensitive) and whose subtree still has content in the view
+  you asked for. That node becomes the new root at depth 0.
+- With `-i`, scoping to a layout container returns the actionable elements inside it, even when the
+  container itself is filtered out.
+- `-d` counts from the scope root.
+- `-s @ref` scopes by that element's label from the last snapshot.
+- When nothing matches, you get an empty snapshot, not the full tree.
+
+## Truncated captures
+
+`truncated: true` means the Android snapshot helper or the iOS Simulator accessibility bridge hit its
+5000-node limit, or the web provider hit its own bound. On Android the limit applies before any `-s`
+scope. The Apple runner does not return a partial tree: above its limit (50,000 nodes, or 5,000 with
+`--raw`) the snapshot fails with a hint to scope it or take a screenshot instead.
+
+Every backend walks the tree in document order, so what gets cut is what comes last: footers, tab
+bars, items after a long list, even when they are on screen. The snapshot carries a warning when this
+happens. Navigate or scroll so fewer elements render and snapshot again, and use `screenshot` as the
+visual truth for the rest.
+
+## Coordinates and viewport
+
+`viewport: { width, height }` names the box the node rects are measured in. It uses the same
+coordinate space and orientation as the rects, so you can scale and clip against the screen the
+snapshot was taken on instead of guessing it from the largest rect.
+
+- iOS reports the app window, so iPad Split View and a foldable panel do not inflate it.
+- Android and Apple TV report the measured screen. Android reports it under `--raw` too, since the
+  raw rects are measured on the same screen.
+- It is absent when the capture measured no box: a macOS capture, whose rects are absolute in window
+  space; a web or Linux capture, which reads a tree without reading a screen; and `--raw` on an Apple
+  target.
+- It is never reported as zero, and it is always the full size. Content-safe gesture bounds are
+  separate.
+
+For Android pixel units and density, see [Android node metadata](#android-node-metadata).
 
 ## iOS capture behavior
 
-Capture tiers are internal. There is no flag that selects a backend; `--raw` chooses a strategy, and
-the strategy owns which tiers it may use.
+iOS snapshots use XCTest on simulators and physical devices. You can't pick the capture backend. `--raw` switches between two strategies, and each strategy
+decides which backends it tries.
 
-- Regular (non-`--raw`) capture uses the **regular visible strategy**: it starts with the recursive
-  XCTest tree, and when that returns **sparse** output for a screen XCTest cannot serialize, it can
-  recover through a query sweep and then, on simulators, a private accessibility backend.
-- The ladder is bounded by the capture budget rather than retried indefinitely; when the budget is
-  spent, the best payload captured so far is returned.
-- Recovery and degradation stay observable instead of being presented as an empty UI. A
-  **recovered** capture warns that it fell back to another backend and is safe to continue from; a
-  **sparse** capture reports that no backend could read the screen and points you at `screenshot`
-  as visual truth plus coordinate taps. Use `--json` and read `snapshotQuality` when you need the
-  state, backend, and reason behind **degraded** output.
+- Regular (non-`--raw`) capture starts with the XCTest tree. When that comes back **sparse** for a
+  screen XCTest cannot read, it retries with a query sweep and then, on simulators, a private
+  accessibility backend.
+- Retries stop when the capture budget runs out, and you get the best result captured so far.
+- A failed or partial capture is reported as such instead of looking like an empty UI. A
+  **recovered** capture warns that it fell back to another backend; you can keep working from it. A
+  **sparse** capture reports that no backend could read the screen and points you to `screenshot`
+  plus coordinate taps. Use `--json` and read `snapshotQuality` for the state, backend, and reason
+  behind **degraded** output.
 - A **sparse** `snapshot` takes that screenshot for you and returns its path as
-  `fallbackScreenshotPath`, so the visual fallback costs no extra command. Remote clients download
-  the image through the normal artifact channel before exposing that path. When the screen was
+  `fallbackScreenshotPath`, so you don't need a separate `screenshot` command. Remote clients
+  download the image to the local machine before returning that path. When the screen was
   reachable but published no accessibility content at all, the warning also names it as a likely app
   accessibility bug — assistive technologies get the same empty tree. Reasons that describe a limit
   of this tool instead (a refused or budget-exhausted capture) are not attributed to the app.
-- `--raw` uses the **raw diagnostic strategy**: it stays tree-first and preserves strict capture
-  failures, so a real XCTest accessibility serialization error surfaces as an error rather than as
-  an empty tree.
-- Private-accessibility recovery and `--actions` reads are simulator-specific. Physical iOS devices
-  have no equivalent independent semantic backend; they bound the XCTest work with a probe instead.
+- `--raw` starts from the XCTest tree and keeps capture failures strict, so an XCTest
+  accessibility error surfaces as an error instead of an empty tree.
+- `--raw` returns the tree as captured, on whichever backend served it. It keeps the off-screen
+  nodes, decorations, and structural wrappers that the default and `-i` views fold away, so a
+  recovered raw capture shows the same hierarchy as a healthy one.
+- `-d` still applies with `--raw`, where it counts traversal depth. `-i` narrows only the default
+  view, so `--raw -i` returns the same tree as `--raw`.
+- Private-accessibility recovery and `--actions` work on simulators only. Physical iOS devices have
+  no second backend to fall back to.
+
+## Android capture behavior
+
+- Android snapshots need the bundled Android snapshot helper. The first snapshot checks for the
+  helper APK and installs it if it is missing or outdated. If the helper is missing or fails, the
+  error says so directly. In a source checkout, run `pnpm build:android` before verifying on
+  Android.
+- On local ADB sessions the helper stays running between captures, and
+  `androidSnapshot.helperTransport` reports `persistent-session`. When that connection isn't
+  available, the capture retries with a one-shot helper run. Set
+  `AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION=0` to turn off the persistent helper.
+- When Android exposes them, the helper captures every interactive window, so keyboard and system
+  overlay nodes can appear next to the app's own tree. `androidSnapshot.captureMode` and
+  `androidSnapshot.windowCount` describe what was captured.
+- Default and `-i` snapshots keep covered surfaces in the same window visible for diagnosis, and
+  mark controls whose drawing order shows they are covered with `interactionBlocked: "covered"`, so
+  selectors can't act on a stale React Native screen underneath.
+- Android 6.0 (API 23) doesn't report the drawing order of sibling views, so this check falls back
+  to conservative behavior there, and `androidSnapshot.occlusionScanUnavailable: true` tells you so.
+- `--raw` returns the tree as captured. It also keeps nodes Android marks invisible and stale
+  application windows.
 
 ## Android node metadata
 
 Android bounds are physical pixels, as the accessibility tree reports them, and so are the points
 `press`, `fill`, and the gesture commands take. `androidSnapshot.pixelDensity` on a helper capture
-is the display's physical pixels per density-independent pixel, as the helper's `DisplayMetrics`
-report it (a 420 dpi phone reports `2.625`, a `wm density` override included); a consumer that works
-in dp divides rects by it and multiplies its points. An older helper omits it. iOS reports points
-already, so it carries no such factor.
+is the display's physical pixels per density-independent pixel (a 420 dpi phone reports `2.625`,
+including any `wm density` override). To work in dp, divide rects by it and multiply your points by
+it. An older helper omits it. iOS already reports points, so iOS snapshots have no such factor.
 
 `androidSnapshot.missingRootWindowTypes` lists the `AccessibilityWindowInfo` types of windows the
 helper listed but could not serialize, for example because the window's root was null or reading its
