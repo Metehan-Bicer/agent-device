@@ -128,6 +128,28 @@ extension RunnerTests {
     }
   }
 
+  // An explicit NON-GOAL of #2634, pinned rather than assumed: the coordinate-driven synthesized
+  // replacement route settles this wait on raw equality only, and never reaches the
+  // unconfirmed-evidence path the accessibility route gained for normalizing fields. The same
+  // field that the fill above leaves unconfirmed-with-evidence fails this wait with a typed
+  // outcome, on the lane that runs only once the XCTest channel is penalized. Narrowing the
+  // runner's echo reading does not leak into this route; carrying unconfirmed evidence here would
+  // be a separate design with its own evidence budget, and this test is the tripwire if anyone
+  // widens the wait without one.
+  func testSynthesizedReplacementCommitStillRefusesACompletingFormattedValue() {
+    let clock = CommitWaitClock()
+    let outcome = Self.awaitSynthesizedReplacementCommitOutcome(
+      expectedText: "000629177",
+      placeholder: nil,
+      stallBudget: 2,
+      ceiling: 10,
+      now: clock.read,
+      observe: { "00 062 91 77" },
+      waitForNextObservation: { clock.advance(1) }
+    )
+    XCTAssertEqual(outcome, .notObserved)
+  }
+
   // The non-failure counterpart: replacement mode must still tolerate real commit lag (the value
   // converges to an exact match over a few polls), not just instant matches.
   func testSynthesizedReplacementCommitToleratesLagUntilExactMatch() {

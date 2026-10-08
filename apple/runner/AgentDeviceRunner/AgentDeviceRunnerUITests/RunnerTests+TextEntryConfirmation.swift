@@ -44,12 +44,66 @@ extension RunnerTests {
   /// the baseline did not already (residual text), or it contains baseline + request in order. A
   /// value related to the entry in none of these ways, such as an OTP field announcing
   /// "6 of 6 digits", is the app's own representation, so retyping cannot make it match.
+  ///
+  /// The two containment clauses keep one exception (#2634): a value the request plus inserted
+  /// formatting alone EXPLAINS — see `textValueCompletesRequest`, which owns the whole test
+  /// including the baseline — is not a degraded copy of anything, and the field that normalizes
+  /// its content shows exactly that after receiving the request. Completion is not correctness
+  /// (a cents-shifting mask passes it); it only stops the value from being refused the
+  /// unconfirmed outcome, and nothing but exact equality verifies.
   static func textEntryValueEchoes(observed: String, expected: String, baseline: String) -> Bool {
     let request = textEntryRequestWithoutSubmitKeys(expected)
     let residualAndRequest = baseline + request
-    return isOrderedSubsequence(observed, of: residualAndRequest)
-      || (isOrderedSubsequence(request, of: observed) && !isOrderedSubsequence(request, of: baseline))
+    if isOrderedSubsequence(observed, of: residualAndRequest) {
+      return true
+    }
+    if textValueCompletesRequest(observed: observed, request: request, baseline: baseline) {
+      return false
+    }
+    return (isOrderedSubsequence(request, of: observed) && !isOrderedSubsequence(request, of: baseline))
       || isOrderedSubsequence(residualAndRequest, of: observed)
+  }
+
+  /// Whether the request plus inserted formatting explains the WHOLE of `observed`: every request
+  /// character in order, every remaining character outside it explainable only as an insertion —
+  /// not a character of the request (an ambiguous embedding may be a dropped-and-shifted copy)
+  /// and not a character of the post-clear `baseline` either, since a partial clear's residual
+  /// text may sit anywhere a mask relocates it — and at least one insertion strictly BETWEEN the
+  /// request's first and last characters, because entry cannot insert between two characters the
+  /// same burst typed while a failed clear's residual may only be appended or prepended
+  /// (`"old123456"` stays an echo). The embedding is the leftmost one, so a doubled entry (`"66"`
+  /// for `"6"`) leaves its surplus at the ends; a mask inserting a request character (`.` for a
+  /// decimal value) falls back to the echo reading; a one-character request has no between.
+  static func textValueCompletesRequest(observed: String, request: String, baseline: String) -> Bool {
+    guard !request.isEmpty, request != observed, request.count > 1 else {
+      return false
+    }
+    // The leftmost embedding of the request into the observed value.
+    var consumedOffsets = IndexSet()
+    var cursor = observed.startIndex
+    for character in request {
+      guard let match = observed[cursor...].firstIndex(of: character) else {
+        return false
+      }
+      consumedOffsets.insert(observed.distance(from: observed.startIndex, to: match))
+      cursor = observed.index(after: match)
+    }
+    // A one-character request has no between for an insertion to sit in.
+    let first = consumedOffsets.first!
+    let last = consumedOffsets.last!
+    var sawInteriorInsertion = false
+    for (offset, character) in observed.enumerated() where !consumedOffsets.contains(offset) {
+      // A request character makes the embedding ambiguous; a baseline character may be residual
+      // a mask relocated into the span. Either way the request plus formatting does not explain
+      // the value.
+      if request.contains(character) || baseline.contains(character) {
+        return false
+      }
+      if offset > first && offset < last {
+        sawInteriorInsertion = true
+      }
+    }
+    return sawInteriorInsertion
   }
 
   /// Classifies a replacement whose read-back never matched. The entry is unconfirmed, not failed,
