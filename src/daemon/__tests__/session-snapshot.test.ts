@@ -1,11 +1,13 @@
 import { expect, test } from 'vitest';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import type { SettleObservation } from '@agent-device/contracts/interaction';
+import { AppError } from '@agent-device/kernel/errors';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import type { SessionState } from '../session-state.ts';
 import {
   markSessionPartialRefsIssued,
   issueSettleRefs,
+  publishAmbiguousMatchCandidateRefs,
   resolveRefStalenessWarning,
   setSessionSnapshot,
   setCommandSnapshot,
@@ -258,3 +260,54 @@ for (const retire of [false, true]) {
     }
   });
 }
+
+// #2870 review: every response that prints candidate @refs must issue those
+// refs on the frame they came from. One rule, consumed by the acting refusal
+// (touch runtime) and the strict-read refusals (is / get attrs dispatch).
+test('ambiguous refusals issue their printed candidates as a partial frame', () => {
+  const store = makeSessionStore();
+  const session = makeSession();
+  setSessionSnapshot(session, makeSnapshot());
+  const ref = store.publish('cwd:ambiguity:default', session);
+  const published = publishAmbiguousMatchCandidateRefs(
+    ref,
+    store,
+    new AppError('AMBIGUOUS_MATCH', 'Selector matched 4 elements', {
+      matches: 4,
+      candidates: ['@e2 [text] "Team Standup"', '@e5 [button] "Team Standup"'],
+    }),
+  );
+  expect(published.details?.refsGeneration).toBe(session.snapshotGeneration);
+  expect(refFrameScope(session)).toEqual(new Set(['e2', 'e5']));
+});
+
+test('a non-ambiguity read refusal issues nothing', () => {
+  const store = makeSessionStore();
+  const session = makeSession();
+  setSessionSnapshot(session, makeSnapshot());
+  const ref = store.publish('cwd:ambiguity-none:default', session);
+  const original = new AppError('COMMAND_FAILED', 'Selector did not match: label="X"');
+  const returned = publishAmbiguousMatchCandidateRefs(ref, store, original);
+  expect(returned).toBe(original);
+  // The ref-frame accessor defaults a never-issued frame to PRISTINE; the
+  // raw slot staying unset is what "untouched" means here.
+  expect(session.refFrame).toBeUndefined();
+});
+
+test('ambiguity without a live session ref (retired or sessionless route) issues nothing', () => {
+  const store = makeSessionStore();
+  const session = makeSession();
+  setSessionSnapshot(session, makeSnapshot());
+  const ref = store.publish('cwd:ambiguity-retired:default', session);
+  store.retire(ref);
+  const published = publishAmbiguousMatchCandidateRefs(
+    ref,
+    store,
+    new AppError('AMBIGUOUS_MATCH', 'Selector matched 2 elements', {
+      matches: 2,
+      candidates: ['@e2 [text] "a"', '@e3 [text] "b"'],
+    }),
+  );
+  expect(published.details?.refsGeneration).toBeUndefined();
+  expect(session.refFrame).toBeUndefined();
+});

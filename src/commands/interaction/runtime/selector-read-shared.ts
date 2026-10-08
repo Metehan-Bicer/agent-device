@@ -7,7 +7,6 @@ import type { BackendSnapshotResult } from '../../../backend.ts';
 import {
   AppError,
   discloseDispatch,
-  ELEMENT_MATCH_CANDIDATE_LIMIT,
   type AppErrorDetails,
   type DispatchDisclosure,
 } from '@agent-device/kernel/errors';
@@ -25,7 +24,7 @@ import {
 } from '@agent-device/selectors';
 import type { SelectorPipelineOutcome } from '@agent-device/selectors/selector-pipeline';
 import { INTERACTION_ERROR_REASONS } from '@agent-device/selectors/interaction-error';
-import { formatSnapshotLine } from '@agent-device/capture-kit/snapshot-lines';
+import { elementMatchCandidateDetails } from '@agent-device/capture-kit/snapshot-lines';
 import { isSparseSnapshotQualityVerdict } from '@agent-device/capture-kit/snapshot-quality-verdict';
 import { extractReadableText } from '@agent-device/capture-kit/text-surface';
 import { now, toBackendContext } from '../../runtime-common.ts';
@@ -177,32 +176,6 @@ export function resolveRefNode(
 }
 
 /**
- * The shared failure door for the observation reads that refuse to guess which
- * element they mean (`is` predicates other than `exists`/`absent`, and
- * `get attrs` — both `readUnique` rows). The pipeline reports three distinct
- * refusals and they are three different facts about the screen, so the door
- * keys on the outcome kind, never on message text:
- *
- * - `none` — nothing matched: `selector_not_found`, which genuinely means the
- *   element is not in the tree.
- * - `ambiguous` — N nodes matched and the row refuses to choose:
- *   `AMBIGUOUS_MATCH`, the code the acting refusal already answers with
- *   (#2870: this used to be reported as `selector_not_found`, which to an
- *   agent reads as "the element does not exist" on a screen where it is
- *   plainly on display). What the two producers SHARE is the code, the
- *   `matches`/`candidates` detail keys, `ELEMENT_MATCH_CANDIDATE_LIMIT`, and
- *   the `formatSnapshotLine` renderer every surface already reads
- *   (`readErrorCandidateViews`); each keeps its own message and remaining
- *   details for its own command.
- * - `occluded` — the row ignores occlusion and cannot produce it; the caller
- *   keeps its own not-found shape.
- *
- * Lives beside the other strict-read failure helpers rather than in its own
- * module: the eager-closure budget owns the daemon entry's import graph, and a
- * builder this small earns no new static edge.
- */
-
-/**
  * The one `selector_not_found` refusal shape shared by the acting rows and the
  * strict reads: COMMAND_FAILED, `formatSelectorFailure`'s message, the typed
  * reason, and `selectorFailureHint` — built once so a hint or message edit
@@ -254,12 +227,9 @@ function selectorAmbiguousFailure(
     `Selector matched ${matchedNodes.length} elements: ${selector}`,
     {
       ...details,
+      ...elementMatchCandidateDetails(matchedNodes),
       command,
       selector,
-      matches: matchedNodes.length,
-      candidates: matchedNodes
-        .slice(0, ELEMENT_MATCH_CANDIDATE_LIMIT)
-        .map((candidate) => formatSnapshotLine(candidate, 0, false)),
       // No `find '<selector>' list` echo here: an authored label can contain a
       // single quote, and a hard single-quoted re-run command is not CLI-safe.
       hint: `Narrow the selector with role/id/longer text, or act on a printed candidate with a command that takes refs, such as press.`,
@@ -267,7 +237,27 @@ function selectorAmbiguousFailure(
   );
 }
 
-/** The refusal this observation route owes its caller for a non-target pipeline outcome. */
+/**
+ * The shared failure door for the observation reads that refuse to guess which
+ * element they mean (`is` predicates other than `exists`/`absent`, and
+ * `get attrs` — both `readUnique` rows). The pipeline reports three distinct
+ * refusals and they are three different facts about the screen, so the door
+ * keys on the outcome kind, never on message text:
+ *
+ * - `none` — nothing matched: `selector_not_found`, which genuinely means the
+ *   element is not in the tree.
+ * - `ambiguous` — N nodes matched and the row refuses to choose:
+ *   `AMBIGUOUS_MATCH`, the code the acting refusal already answers with
+ *   (#2870: this used to be reported as `selector_not_found`, which to an
+ *   agent reads as "the element does not exist" on a screen where it is
+ *   plainly on display). What the two producers SHARE is the code and
+ *   `elementMatchCandidateDetails` — the one disclosure builder (cap,
+ *   snapshot-line renderer, `matches`/`candidates` keys) every surface already
+ *   reads through `readErrorCandidateViews`; each keeps its own message and
+ *   remaining details for its own command.
+ * - `occluded` — the row ignores occlusion and cannot produce it; the caller
+ *   keeps its own not-found shape.
+ */
 export function observationReadFailure(params: {
   outcome: SelectorPipelineOutcome;
   selectorExpression: string;

@@ -1,10 +1,6 @@
 import type { FindLocator } from '@agent-device/selectors';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
-import { formatSnapshotLine } from '@agent-device/capture-kit/snapshot-lines';
-import {
-  ELEMENT_MATCH_CANDIDATE_LIMIT,
-  type ElementMatchCandidateDetails,
-} from '@agent-device/kernel/errors';
+import { elementMatchCandidateDetails } from '@agent-device/capture-kit/snapshot-lines';
 import type { DaemonResponse } from './daemon-request.ts';
 import { errorResponse } from '@agent-device/kernel/contracts';
 
@@ -23,15 +19,9 @@ export function buildAmbiguousMatchError(
   locator: FindLocator,
   query: string,
 ): DaemonResponse {
-  const candidateDetails: ElementMatchCandidateDetails = {
-    matches: matches.length,
-    candidates: matches
-      .slice(0, ELEMENT_MATCH_CANDIDATE_LIMIT)
-      .map((candidate) => formatSnapshotLine(candidate, 0, false)),
-  };
   return errorResponse(
     'AMBIGUOUS_MATCH',
     `find matched ${matches.length} elements for ${locator} "${query}". Use a more specific locator or selector.`,
-    { locator, query, ...candidateDetails },
+    { locator, query, ...elementMatchCandidateDetails(matches) },
   );
 }

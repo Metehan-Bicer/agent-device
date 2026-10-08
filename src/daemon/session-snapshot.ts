@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type { SettleObservation } from '@agent-device/contracts/interaction';
+import { readElementMatchCandidateRefs, AppError } from '@agent-device/kernel/errors';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { activatePartialRefFrame, refFrameEpoch, refFrameState } from './ref-frame.ts';
 import type { SessionRef, SessionState } from './session-state.ts';
@@ -134,6 +135,42 @@ export function issueSettleRefs(
   if (!session) return undefined;
   markSessionPartialRefsIssued(session, collectSettleIssuedRefBodies(settle));
   return session.snapshotGeneration;
+}
+
+/**
+ * ADR 0014's issuance rule for ambiguity refusals: a response that prints
+ * candidate `@ref`s must issue those refs on the frame they were minted from.
+ * Every route that can answer `AMBIGUOUS_MATCH` with candidates runs its error
+ * through here — the acting touch runtime (`press`/`click`/`fill`) and the
+ * strict-read dispatches (`is`, `get attrs`) — so the rule has one
+ * implementation beside the partial-frame primitive it wraps, exactly like
+ * {@link issueSettleRefs}. The candidate bodies become a PARTIAL frame over the
+ * capture the failing request just consumed (stored by the request-bound
+ * capture runtime before the refusal), and the frame's epoch rides back on the
+ * error as `refsGeneration` so every surface pins the printed candidates the
+ * way `find` pins its list — a printed ref then drives the next command
+ * against the very tree that listed it, instead of resolving against an older
+ * frame where the same body can name a different node (#2870 review).
+ * A non-ambiguity error, an error without candidate refs, or a session that
+ * has no generation to freeze is returned untouched: nothing was issued.
+ */
+export function publishAmbiguousMatchCandidateRefs(
+  ref: SessionRef | undefined,
+  sessionStore: SessionStore,
+  error: AppError,
+): AppError {
+  if (error.code !== 'AMBIGUOUS_MATCH') return error;
+  const refs = readElementMatchCandidateRefs(error.details);
+  if (refs.length === 0 || !ref) return error;
+  const session = sessionStore.resolveCurrent(ref);
+  if (!session || session.snapshotGeneration === undefined) return error;
+  markSessionPartialRefsIssued(session, refs);
+  return new AppError(
+    error.code,
+    error.message,
+    { ...error.details, refsGeneration: session.snapshotGeneration },
+    error.cause,
+  );
 }
 
 /** The reusable refs a settled diff exposed: added diff lines, `refs`, `tail`. */
