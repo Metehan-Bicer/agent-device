@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { listSourceFiles } from './check.ts';
+import { workspaceSpecifierTargets } from './package-boundaries.ts';
 import {
   fieldClassificationDrift,
   findSessionStateWrites,
@@ -25,10 +26,31 @@ import {
   unclassifiedZones,
 } from './model.ts';
 
+test('parseImports rejects malformed source instead of returning an incomplete graph', () => {
+  assert.throws(
+    () => parseImports("import { Broken from './broken.ts';"),
+    /Cannot parse imports.*Expected/,
+  );
+});
+
+test('parseImports ignores import-like declarations inside comments and template text', () => {
+  const source = [
+    'const documentation = `',
+    "import { phantom } from './phantom.ts';",
+    "export { phantom } from './also-phantom.ts';",
+    '`;',
+    '/*',
+    "import './comment.ts';",
+    '*/',
+  ].join('\n');
+  assert.deepEqual(parseImports(source), []);
+});
+
 test('parseImports distinguishes value, type-only, dynamic, and value re-export edges', () => {
   const edges = parseImports(
     [
       "import value from './value.ts';",
+      "import './side-effect.ts';",
       "import type { TypeA } from './types.ts';",
       "import { type TypeB, type TypeC } from './more-types.ts';",
       "import { type TypeD, runtime } from './mixed.ts';",
@@ -42,6 +64,7 @@ test('parseImports distinguishes value, type-only, dynamic, and value re-export 
     edges.map(({ spec, dynamic, typeOnly }) => ({ spec, dynamic, typeOnly })),
     [
       { spec: './value.ts', dynamic: false, typeOnly: false },
+      { spec: './side-effect.ts', dynamic: false, typeOnly: false },
       { spec: './types.ts', dynamic: false, typeOnly: true },
       { spec: './more-types.ts', dynamic: false, typeOnly: true },
       { spec: './mixed.ts', dynamic: false, typeOnly: false },
@@ -50,6 +73,213 @@ test('parseImports distinguishes value, type-only, dynamic, and value re-export 
       { spec: './dynamic.ts', dynamic: true, typeOnly: false },
     ],
   );
+});
+
+test('parseImports records TSImportType edges separately from dynamic imports', () => {
+  const edges = parseImports(
+    [
+      "type Imported = import('./type-only.ts').Imported;",
+      "type Queried = typeof import('./type-query.ts').value;",
+      "type SameTarget = import('./same-target.ts').Target; void import('./same-target.ts');",
+      "type Nested = import('./nested.ts').namespace.SessionState;",
+      "type WholeModule = import('./whole-module.ts');",
+    ].join('\n'),
+  );
+
+  assert.deepEqual(
+    edges.map(({ spec, dynamic, typeOnly, line, symbols }) => ({
+      spec,
+      dynamic,
+      typeOnly,
+      line,
+      symbols,
+    })),
+    [
+      {
+        spec: './type-only.ts',
+        dynamic: false,
+        typeOnly: true,
+        line: 1,
+        symbols: ['Imported'],
+      },
+      {
+        spec: './type-query.ts',
+        dynamic: false,
+        typeOnly: true,
+        line: 2,
+        symbols: ['value'],
+      },
+      {
+        spec: './same-target.ts',
+        dynamic: true,
+        typeOnly: false,
+        line: 3,
+        symbols: [],
+      },
+      {
+        spec: './same-target.ts',
+        dynamic: false,
+        typeOnly: true,
+        line: 3,
+        symbols: ['Target'],
+      },
+      {
+        spec: './nested.ts',
+        dynamic: false,
+        typeOnly: true,
+        line: 4,
+        symbols: ['namespace'],
+      },
+      {
+        spec: './whole-module.ts',
+        dynamic: false,
+        typeOnly: true,
+        line: 5,
+        symbols: [],
+      },
+    ],
+  );
+
+  const resolved = resolveImportEdges(
+    new Map([
+      [
+        'src/core/consumer.ts',
+        "type Imported = import('../commands/target.ts').Target; void import('../commands/target.ts');",
+      ],
+      ['src/commands/target.ts', 'export type Target = unknown;'],
+    ]),
+  );
+  assert.deepEqual(
+    resolved.map(({ file, target, dynamic, typeOnly }) => ({ file, target, dynamic, typeOnly })),
+    [
+      {
+        file: 'src/core/consumer.ts',
+        target: 'src/commands/target.ts',
+        dynamic: true,
+        typeOnly: false,
+      },
+      {
+        file: 'src/core/consumer.ts',
+        target: 'src/commands/target.ts',
+        dynamic: false,
+        typeOnly: true,
+      },
+    ],
+  );
+});
+
+const RECORDED_IMPORT_TYPE_CASES = [
+  [
+    'packages/contracts/src/platform-runtime.ts',
+    'packages/contracts/src/device-shutdown-runtime.ts',
+    './device-shutdown-runtime.ts',
+    'DeviceShutdownRuntime',
+  ],
+  [
+    'packages/platform-apple/src/runner/runner-provider.ts',
+    'packages/platform-apple/src/runner/runner-artifact.ts',
+    './runner-artifact.ts',
+    'RunnerStartAdmission',
+  ],
+  [
+    'src/daemon/interaction/index.ts',
+    'src/daemon/gesture-runtime.ts',
+    '../gesture-runtime.ts',
+    'BoundGestureExecutor',
+  ],
+  [
+    'src/daemon/interaction/index.ts',
+    'src/daemon/touch-runtime.ts',
+    '../touch-runtime.ts',
+    'BoundTouchExecutor',
+  ],
+  [
+    'src/daemon/interaction/internal/interaction.ts',
+    'packages/contracts/src/android-observation.ts',
+    '@agent-device/contracts/android-observation',
+    'AndroidObservationAdapter',
+  ],
+  [
+    'src/daemon/snapshot-runtime-binding.ts',
+    'packages/contracts/src/focus-runtime.ts',
+    '@agent-device/contracts/focus-runtime',
+    'FocusPointInput',
+  ],
+  [
+    'src/daemon/snapshot-runtime-binding.ts',
+    'packages/contracts/src/interactor-types.ts',
+    '@agent-device/contracts/interactor-types',
+    'TypeTextBackendResult',
+  ],
+  [
+    'src/daemon/snapshot-runtime-binding.ts',
+    'packages/contracts/src/type-text-runtime.ts',
+    '@agent-device/contracts/type-text-runtime',
+    'TypeTextInput',
+  ],
+  [
+    'src/sdk/artifacts.ts',
+    'packages/platform-android/src/mechanics.ts',
+    '@agent-device/platform-android/mechanics',
+    'resolveAndroidArchivePackageName',
+  ],
+] as const;
+
+test('the nine recorded TSImportType shapes resolve with source-side symbols', () => {
+  const cases = RECORDED_IMPORT_TYPE_CASES;
+  const sources = new Map<string, string>();
+  const exports = new Map<string, string>();
+  for (const [index, [file, target, spec, symbol]] of cases.entries()) {
+    const query = file === 'src/sdk/artifacts.ts' ? 'typeof ' : '';
+    sources.set(
+      file,
+      `${sources.get(file) ?? ''}type Dependency${index} = ${query}import('${spec}').${symbol};\n`,
+    );
+    sources.set(target, `export type ${symbol} = unknown;`);
+    if (spec.startsWith('@')) exports.set(spec, target);
+  }
+  assert.deepEqual(
+    resolveImportEdges(sources, exports).map(({ file, target, dynamic, typeOnly, symbols }) => ({
+      file,
+      target,
+      dynamic,
+      typeOnly,
+      symbols,
+    })),
+    cases.map(([file, target, , symbol]) => ({
+      file,
+      target,
+      dynamic: false,
+      typeOnly: true,
+      symbols: [symbol],
+    })),
+  );
+});
+
+test('the recorded production type dependencies resolve from their owning declarations', () => {
+  const sources = new Map(
+    listSourceFiles().map((file) => [file, readFileSync(path.resolve(file), 'utf8')]),
+  );
+  const edges = resolveImportEdges(sources, workspaceSpecifierTargets(process.cwd()));
+  for (const [recordedFile, target, , recordedSymbol] of RECORDED_IMPORT_TYPE_CASES) {
+    // #3304 moved the shutdown declaration to an ordinary type import in the operations module.
+    const movedShutdown = recordedFile === 'packages/contracts/src/platform-runtime.ts';
+    const file = movedShutdown
+      ? 'packages/contracts/src/platform-runtime-operations.ts'
+      : recordedFile;
+    const symbol = movedShutdown ? 'DeviceShutdownRuntimeOperations' : recordedSymbol;
+    assert.ok(
+      edges.some(
+        (edge) =>
+          edge.file === file &&
+          edge.target === target &&
+          !edge.dynamic &&
+          edge.typeOnly &&
+          edge.symbols.includes(symbol),
+      ),
+      `missing production type dependency: ${file} -> ${target} (${symbol})`,
+    );
+  }
 });
 
 test('parseImports detects multiline dynamic imports', () => {
@@ -112,6 +342,7 @@ test('parseImports retains named source symbols without changing edge-kind detec
       "import type { TypeB as RenamedType } from './types.ts';",
       "export { reExport as publicName } from './re-export.ts';",
       "export type { ExportedType } from './exported-types.ts';",
+      "export * from './re-export-all.ts';",
       "import * as namespace from './namespace.ts';",
       "void import('./dynamic.ts');",
     ].join('\n'),
@@ -129,6 +360,7 @@ test('parseImports retains named source symbols without changing edge-kind detec
       { spec: './types.ts', dynamic: false, typeOnly: true, symbols: ['TypeB'] },
       { spec: './re-export.ts', dynamic: false, typeOnly: false, symbols: ['reExport'] },
       { spec: './exported-types.ts', dynamic: false, typeOnly: true, symbols: ['ExportedType'] },
+      { spec: './re-export-all.ts', dynamic: false, typeOnly: false, symbols: [] },
       { spec: './namespace.ts', dynamic: false, typeOnly: false, symbols: [] },
       { spec: './dynamic.ts', dynamic: true, typeOnly: false, symbols: [] },
     ],
