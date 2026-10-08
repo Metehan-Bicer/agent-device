@@ -792,9 +792,32 @@ extension RunnerTests {
   /// asked to look, which is what #3254 reports. The answer comes from `state`, which never launches,
   /// so a stopped or unknown app keeps the standing route untouched, including the launch that route
   /// performs; only the raise of an already-running app is in question here.
+  ///
+  /// Only the one state the host can answer a full tree from is served in place. Anything else —
+  /// `.unknown`, `.notRunning`, and on non-macOS builds the suspended state, which the macOS SDK
+  /// does not declare and the host lane therefore cannot name — stays on the activating route on
+  /// purpose: an app that cannot promise an answerable tree should pay the repair that settles it
+  /// rather than trade a focus steal for an empty read. This mirrors `targetNeedsActivation`'s
+  /// macOS set, and `macAppCaptureNeedsRaise` agrees with it state for state: the suspended or
+  /// unknown app that a read activates is the same app a window-level capture raises.
+  ///
+  /// Serving in place books no activation fact and carries no substitute marker, decided with #3254
+  /// rather than by omission: the activation channel records only a repair that was performed, and
+  /// the observation payload's state belongs to the iOS observe-only contract, so an
+  /// invented marker would put the same integer in two contracts with different meanings. The tree
+  /// is live, not degraded — the measured rect drift was time, not foreground state — and nothing
+  /// on the host acts on a "was background" fact today, so the answer travels as an ordinary read.
+  /// `testMacReadOfABackgroundAppIsServedInBackgroundWithoutActivating` pins the silence so it stays
+  /// owned: a future disclosure must change that assertion on purpose, not appear silently.
   @MainActor
   func macReadMayBeServedInBackground(_ command: Command) -> Bool {
     guard let bundleId = command.appBundleId?.trimmedNonEmpty else { return false }
-    return XCUIApplication(bundleIdentifier: bundleId).state == .runningBackground
+    return macReadMayBeServedInBackground(command: command, targetState: XCUIApplication(bundleIdentifier: bundleId).state)
+  }
+
+  /// The state split of `macReadMayBeServedInBackground`, separated from the probe so the host lane
+  /// pins every state the answer branches on, the same way `macAppCaptureNeedsRaise` is pinned.
+  func macReadMayBeServedInBackground(command: Command, targetState: XCUIApplication.State) -> Bool {
+    command.appBundleId?.trimmedNonEmpty != nil && targetState == .runningBackground
   }
 }

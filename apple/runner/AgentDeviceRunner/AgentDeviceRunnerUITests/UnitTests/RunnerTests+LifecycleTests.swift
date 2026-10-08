@@ -119,35 +119,55 @@ extension RunnerTests {
 
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS && os(macOS)
 extension RunnerTests {
-  /// Pins every state the macOS screenshot raise condition reads (#3254): only an app that is not
-  /// already foreground is ever raised, and only a window-level grab needs it — a `--fullscreen`
-  /// capture of a running app answers from any foreground. A stopped app keeps its standing answer in
-  /// both shapes, because there the activation is also the launch it has always performed; the
-  /// change is that full-screen stops paying a raise for a RUNNING app its pixels never needed. The
-  /// screenshot call site reads this same function, so a drifted condition is a red row rather than a
-  /// silent behavior change.
-  func testMacAppCaptureNeedsRaiseIsWindowLevelAndBackgroundOnly() {
+  /// Pins every state the macOS screenshot raise condition reads (#3254), together with the read
+  /// arm's answer for the same state, so one table owns the pair. Both predicates run their real
+  /// bodies: a drifted condition on either side lands as a red row rather than a silent behavior
+  /// change. The rows encode the two platform facts the split rests on: the macOS SDK declares no
+  /// suspended state (see `RunnerTests+ApplicationStateRawValueTests`), so these two predicates
+  /// cannot disagree on it here, and every state that is not `.runningBackground` keeps its
+  /// activating route for reads — which for a capture is also where the raise lives. The one
+  /// deliberate divergence is background itself: a read is served in place because the tree answers
+  /// from anywhere, while a window-level capture raises because its pixels are a region grab that
+  /// the occluding app spoils (#3254's measurement). Full-screen captures raise only a stopped app,
+  /// where the activation is the launch it has always performed.
+  func testMacBackgroundServingAndCaptureRaiseConditionsArePinnedPerState() throws {
+    let read = try runnerCommandFixture(#"{"command":"snapshot","commandId":"table","appBundleId":"com.example.any"}"#)
+    let noBundle = try runnerCommandFixture(#"{"command":"snapshot","commandId":"table"}"#)
+    let states: [(state: XCUIApplication.State, expected: Bool)] = [
+      (.unknown, false),
+      (.notRunning, false),
+      (.runningBackground, true),
+      (.runningForeground, false),
+    ]
     let foreground = XCUIApplication.State.runningForeground
-    let background = XCUIApplication.State.runningBackground
     let notRunning = XCUIApplication.State.notRunning
-    // Rows are literal expectations, not the condition recomputed: a drifted condition must land as
-    // a red row here, not move both sides of the comparison together.
-    let table: [(fullscreen: Bool?, state: XCUIApplication.State, expected: Bool)] = [
+    let raiseRows: [(fullscreen: Bool?, state: XCUIApplication.State, expected: Bool)] = [
       (nil, foreground, false),
-      (nil, background, true),
+      (nil, .runningBackground, true),
       (nil, notRunning, true),
       (false, foreground, false),
-      (false, background, true),
+      (false, .runningBackground, true),
       (false, notRunning, true),
       (true, foreground, false),
-      (true, background, false),
+      (true, .runningBackground, false),
       (true, notRunning, true),
     ]
-    for row in table {
+    for row in states {
+      XCTAssertEqual(
+        macReadMayBeServedInBackground(command: read, targetState: row.state),
+        row.expected,
+        "read state=\(row.state.rawValue)"
+      )
+    }
+    XCTAssertFalse(
+      macReadMayBeServedInBackground(command: noBundle, targetState: .runningBackground),
+      "a read naming no app has no session app to serve in place"
+    )
+    for row in raiseRows {
       XCTAssertEqual(
         macAppCaptureNeedsRaise(fullscreen: row.fullscreen, targetState: row.state),
         row.expected,
-        "fullscreen=\(String(describing: row.fullscreen)) state=\(row.state.rawValue)"
+        "capture fullscreen=\(String(describing: row.fullscreen)) state=\(row.state.rawValue)"
       )
     }
   }

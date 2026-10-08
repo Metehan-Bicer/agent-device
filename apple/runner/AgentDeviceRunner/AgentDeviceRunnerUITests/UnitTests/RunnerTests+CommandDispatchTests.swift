@@ -749,6 +749,10 @@ extension RunnerTests {
         "\(request) must be served against the background app it names"
       )
       XCTAssertNil(pendingTargetActivation, "\(request) may not book an activation fact")
+      // The disclosure decision, pinned with #3254: a background-served read answers as an ordinary
+      // read with no substitute marker (no observation payload, no fact). The tree is live, not
+      // degraded; a future disclosure must edit this line on purpose.
+      XCTAssertNil(prepared.observation, "\(request) must not invent an observation payload")
       XCTAssertEqual(
         target.state,
         .runningBackground,
