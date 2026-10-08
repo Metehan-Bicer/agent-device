@@ -65,15 +65,15 @@ extension RunnerTests {
   }
 
   /// Whether the request plus inserted formatting explains the WHOLE of `observed`: every request
-  /// character in order, every remaining character outside it explainable only as an insertion —
-  /// not a character of the request (an ambiguous embedding may be a dropped-and-shifted copy)
-  /// and not a character of the post-clear `baseline` either, since a partial clear's residual
-  /// text may sit anywhere a mask relocates it — and at least one insertion strictly BETWEEN the
-  /// request's first and last characters, because entry cannot insert between two characters the
-  /// same burst typed while a failed clear's residual may only be appended or prepended
-  /// (`"old123456"` stays an echo). The embedding is the leftmost one, so a doubled entry (`"66"`
-  /// for `"6"`) leaves its surplus at the ends; a mask inserting a request character (`.` for a
-  /// decimal value) falls back to the echo reading; a one-character request has no between.
+  /// character in order under the leftmost embedding, every unconsumed character explainable as
+  /// neither a character of the request (an ambiguous embedding may be a dropped-and-shifted
+  /// copy) nor of the post-clear `baseline` (any baseline character in the value is failed-clear
+  /// residual, wherever a mask relocated it), and at least one insertion strictly BETWEEN the
+  /// request's first and last characters — entry cannot insert between two characters the same
+  /// burst typed, so end-only insertions (`"old123456"` for `"123456"`) stay echoes. A doubled
+  /// entry (`"66"` for `"6"`) leaves its surplus at the ends; a mask inserting a request
+  /// character (`.` for a decimal value) falls back to the echo reading; a one-character request
+  /// has no between.
   static func textValueCompletesRequest(observed: String, request: String, baseline: String) -> Bool {
     guard !request.isEmpty, request != observed, request.count > 1 else {
       return false

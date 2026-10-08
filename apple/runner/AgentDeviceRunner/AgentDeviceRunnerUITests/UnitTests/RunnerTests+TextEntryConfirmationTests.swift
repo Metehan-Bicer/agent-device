@@ -51,6 +51,12 @@ extension RunnerTests {
     XCTAssertFalse(Self.textValueCompletesRequest(observed: "$0.05", request: "5", baseline: ""))
     XCTAssertFalse(Self.textValueCompletesRequest(observed: "1.234.5", request: "12.5", baseline: ""))
     XCTAssertFalse(Self.textValueCompletesRequest(observed: "anything", request: "", baseline: ""))
+    // A partial clear's residual is never an insertion: baseline "12" explains the leading
+    // "12", so the spaces cannot make "12 567 8" (holding 125678) a completion of "5678".
+    XCTAssertFalse(Self.textValueCompletesRequest(observed: "12 567 8", request: "5678", baseline: "12"))
+    // Its closest positive: residual fully absorbed by the embedding, where every extra is
+    // punctuation the baseline cannot explain — the value is request + formatting after all.
+    XCTAssertTrue(Self.textValueCompletesRequest(observed: "(555) 123-4567", request: "5551234567", baseline: "12"))
   }
 
   func testDigitCountSummaryThatMovedOffItsBaselineIsUnconfirmed() {
@@ -169,6 +175,17 @@ extension RunnerTests {
         requested: "5678",
         baseline: Self.otpObservation("12"),
         observed: Self.otpObservation("12 567 8")
+      )
+    )
+
+    // The rule keys on whether the baseline explains an extra, not on baseline emptiness: here
+    // the residual "12" is absorbed into the request's own digits and every extra is
+    // punctuation, so the value is fully explained by request + formatting and discloses.
+    XCTAssertNotNil(
+      Self.unconfirmedTextEntryEvidence(
+        requested: "5551234567",
+        baseline: Self.otpObservation("12"),
+        observed: Self.otpObservation("(555) 123-4567")
       )
     )
 
