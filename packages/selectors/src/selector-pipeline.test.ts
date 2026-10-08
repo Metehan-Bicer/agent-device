@@ -5,6 +5,7 @@ import { SELECTOR_RESOLUTION_POLICIES } from '@agent-device/selectors';
 import { makeSnapshotState } from './snapshot-geometry.fixtures.ts';
 import {
   ELEMENT14_DISTINCT_SUBTREE_NODES,
+  RN_TEXT_ECHO_AUTHORED_CHILD_NODES,
   RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES,
   RN_TEXT_ECHO_NODES,
   RN_TEXT_ECHO_OFFSET_RECT_NODES,
@@ -355,8 +356,8 @@ test('the uniqueness rows collapse React Native text reported twice', async () =
 
 /**
  * Each negative changes exactly ONE structural fact of the pair above while every
- * label and rect still matches, so a rule reading the description rather than the
- * structure would answer and these tests would notice.
+ * label and rect still matches (or the ancestry breaks), so a rule reading the
+ * description rather than the structure would answer and these tests would notice.
  */
 test('the uniqueness rows refuse a text pair that is not one reporter and its mirror', async () => {
   const cases = [
@@ -368,6 +369,14 @@ test('the uniqueness rows refuse a text pair that is not one reporter and its mi
     [
       'same label repeated at a different rect',
       nodesOf(RN_TEXT_ECHO_OFFSET_RECT_NODES),
+      RN_TEXT_ECHO_SELECTOR,
+    ],
+    [
+      // Same label AND same frame — the case geometry cannot decide. The
+      // descendant is authored (view-backed roles), not the platform's
+      // reported accessibility element, so the pair stays two elements.
+      'same label at the same frame with an authored descendant',
+      nodesOf(RN_TEXT_ECHO_AUTHORED_CHILD_NODES),
       RN_TEXT_ECHO_SELECTOR,
     ],
   ] as const;

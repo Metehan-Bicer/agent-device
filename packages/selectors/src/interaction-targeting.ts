@@ -146,6 +146,23 @@ function resolveUnverifiedWrapperControlWithIndex(
 }
 
 /**
+ * The mirror half of the RN pair is not a view the app authored: it is the
+ * synthetic element the platform reports for the reporter's accessibility
+ * subtree, and it carries that reportage in its role/subrole
+ * (`RCTAccessibilityElement` / `UIAccessibilityElement`, measured live via
+ * `snapshot --raw`). Requiring it on every non-reporter candidate is what
+ * distinguishes "one element the platform reported twice" from "two authored
+ * elements that happen to share a label and a frame" — geometry cannot tell
+ * those apart, only the reportage can. An authored child (a nested `<Text>`
+ * styled to the same label at the same place, a `<View>` carrying the same
+ * accessibilityLabel) has view-backed role/subrole and keeps the refusal.
+ */
+function isReportedAccessibilityElement(node: SnapshotNode): boolean {
+  const roles = [node.type, node.role, node.subrole].map((value) => normalizeType(value ?? ''));
+  return roles.some((role) => role.includes('accessibilityelement'));
+}
+
+/**
  * The React Native text shape, captured live from the fixture Catalog screen: a
  * `RCTParagraphComponentView` reporting the accessibility label (and the app's
  * `testID`) with its own `RCTAccessibilityElement` child repeating the identical
@@ -166,6 +183,10 @@ function resolveUnverifiedWrapperControlWithIndex(
  * - identical non-empty labels and rects agreeing within wrapper slack — a nested
  *   `<Text>` that repeats a word at its own position is a second run of text, not
  *   a mirror, and a distinct rect proves it;
+ * - every non-reporter candidate is a reported accessibility element (above) —
+ *   same label AND same frame is exactly the case where geometry cannot
+ *   distinguish a mirror from a second authored element, so the reportage is
+ *   required and an authored same-frame child stays ambiguous;
  * - no candidate is a semantic touch target — a button labelled like its own static
  *   text is two roles the caller still has to choose between (that shape is the
  *   wrapper rule above's job, through the hittability door it keeps);
@@ -189,6 +210,7 @@ function resolveTextEchoReporterWithIndex(
   if (!reporterRect) return null;
   const mirrorsOneReporter = candidates.every(
     (candidate) =>
+      (candidate === reporter || isReportedAccessibilityElement(candidate)) &&
       candidate.label?.trim() === reporterLabel &&
       agreesWithinWrapperSlack(normalizeRect(candidate.rect), reporterRect),
   );

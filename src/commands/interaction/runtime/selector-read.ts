@@ -28,13 +28,13 @@ import {
   type CapturedSnapshot,
   type SelectorSnapshotOptions,
   captureSelectorSnapshot,
+  observationReadFailure,
   readText,
   requireSnapshotSession,
   resolveRefNode,
 } from './selector-read-shared.ts';
 import { findSnapshotScope, sparseSelectorSnapshotError } from './selector-read-utils.ts';
 import { deriveSelectorCapturePolicy } from './selector-capture-policy.ts';
-import { observationReadFailure } from './selector-observation-failure.ts';
 import { createWaitPolling, type WaitPollDeadline, waitTimeoutError } from './wait-polling.ts';
 import {
   createSelectorWaitCommands,

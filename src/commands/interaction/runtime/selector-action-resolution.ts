@@ -1,4 +1,4 @@
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, ELEMENT_MATCH_CANDIDATE_LIMIT } from '@agent-device/kernel/errors';
 import type { Platform, PublicPlatform } from '@agent-device/kernel/device';
 import type { SnapshotNode } from '@agent-device/kernel/snapshot';
 import type { SelectorResolution } from '@agent-device/selectors';
@@ -6,8 +6,6 @@ import { classifyActionableTouchCandidates } from '@agent-device/selectors/inter
 import { listSelectorPipelineMatches } from '@agent-device/selectors/selector-pipeline';
 import type { ActingPipelinePolicy } from '@agent-device/selectors/selector-pipeline-policy';
 import { formatSnapshotLine } from '@agent-device/capture-kit/snapshot-lines';
-
-const AMBIGUOUS_ACTION_CANDIDATE_LIMIT = 5;
 
 /**
  * How an acting row narrows its candidate set: wrapper duplicates may collapse
@@ -51,7 +49,7 @@ export function resolveActionSelector(
         selector: list.selector,
         matches: classification.candidates.length,
         candidates: classification.candidates
-          .slice(0, AMBIGUOUS_ACTION_CANDIDATE_LIMIT)
+          .slice(0, ELEMENT_MATCH_CANDIDATE_LIMIT)
           .map((candidate) => formatSnapshotLine(candidate, 0, false)),
       },
     );

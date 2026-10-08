@@ -22,6 +22,7 @@ import {
   type CapturedSnapshot,
   type SelectorSnapshotOptions,
   captureSelectorSnapshot,
+  observationReadFailure,
 } from './selector-read-shared.ts';
 import { deriveSelectorCapturePolicy } from './selector-capture-policy.ts';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
@@ -30,7 +31,6 @@ import {
   absenceUnreadableError,
 } from '@agent-device/selectors/absence-observation-errors';
 import { resolveAbsenceObservation } from '@agent-device/selectors/absence-observation-resolution';
-import { observationReadFailure } from './selector-observation-failure.ts';
 
 export type IsCommandOptions = CommandContext &
   SelectorSnapshotOptions & {

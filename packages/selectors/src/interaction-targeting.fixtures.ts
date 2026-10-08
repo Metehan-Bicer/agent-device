@@ -365,7 +365,8 @@ export const RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES: RawSnapshotNode[] = [
 /**
  * The other closest negative: one ancestry chain whose descendant repeats the
  * ancestor's label at a DIFFERENT rect — two runs of the same words, which is two
- * elements the caller still has to choose between.
+ * elements the caller still has to choose between. Roles mirror the live RN pair
+ * so the rect is the ONLY fact that differs from the collapsing positive.
  */
 export const RN_TEXT_ECHO_OFFSET_RECT_NODES: RawSnapshotNode[] = [
   {
@@ -373,6 +374,8 @@ export const RN_TEXT_ECHO_OFFSET_RECT_NODES: RawSnapshotNode[] = [
     depth: 1,
     parentIndex: 2,
     type: 'XCUIElementTypeStaticText',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
     label: 'Catalog scroll: top',
     rect: { x: 18, y: 168, width: 350, height: 17 },
     enabled: true,
@@ -383,8 +386,54 @@ export const RN_TEXT_ECHO_OFFSET_RECT_NODES: RawSnapshotNode[] = [
     depth: 2,
     parentIndex: 0,
     type: 'XCUIElementTypeStaticText',
+    role: 'RCTAccessibilityElement',
+    subrole: 'UIAccessibilityElement',
     label: 'Catalog scroll: top',
     rect: { x: 18, y: 420, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 2,
+    depth: 0,
+    type: 'XCUIElementTypeApplication',
+    rect: { x: 0, y: 0, width: 386, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+];
+
+/**
+ * The reportage negative: one ancestry chain with the identical label at the
+ * identical rect — the shape geometry cannot distinguish — where the descendant
+ * is an AUTHORED element (a nested `<Text>` or a `<View>` carrying the same
+ * accessibilityLabel, view-backed role/subrole), not the accessibility element
+ * the platform reports for the reporter. Same frame, same label, two authored
+ * elements: the collapse rule's `isReportedAccessibilityElement` clause keeps
+ * this ambiguous.
+ */
+export const RN_TEXT_ECHO_AUTHORED_CHILD_NODES: RawSnapshotNode[] = [
+  {
+    index: 0,
+    depth: 1,
+    parentIndex: 2,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 1,
+    depth: 2,
+    parentIndex: 0,
+    type: 'RCTParagraphComponentView',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
     enabled: true,
     hittable: true,
   },

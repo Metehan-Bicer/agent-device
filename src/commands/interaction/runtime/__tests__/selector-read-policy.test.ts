@@ -83,6 +83,39 @@ test('is reports the ambiguity it refuses as an ambiguity, not an absence (readU
 });
 
 /**
+ * Both rows share one door, so `details.selector` must name the MATCHED
+ * alternative for both, never the caller's authored expression. `is` passes
+ * its authored selector among its details; a spread order that let caller
+ * details win would make `is` report the whole expression while `get attrs`
+ * reported the alternative — same door, two shapes (#2870 review).
+ */
+test('both strict rows report the matched alternative as details.selector, not the authored expression', async () => {
+  const AUTHORED = 'label="Nowhere" || label="Save"';
+  const device = createSelectorDevice(ambiguousSelectorReadSnapshot());
+
+  const errors = await Promise.all([
+    device.selectors.is({ session: 'default', predicate: 'visible', selector: AUTHORED }).then(
+      () => null,
+      (error: unknown) => error as AppError,
+    ),
+    device.selectors.getAttrs(selector(AUTHORED), { session: 'default' }).then(
+      () => null,
+      (error: unknown) => error as AppError,
+    ),
+  ]);
+
+  for (const error of errors) {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.code, 'AMBIGUOUS_MATCH');
+    assert.equal(
+      (error.details as { selector?: string } | undefined)?.selector,
+      'label="Save"',
+      'details.selector names the alternative that matched twice',
+    );
+  }
+});
+
+/**
  * The closest negative to the pair above: a selector that matches NOTHING still
  * reports proof of absence. The two failures carry different typed reasons and
  * codes, so no consumer can read "not on screen" from a message it shares with an
