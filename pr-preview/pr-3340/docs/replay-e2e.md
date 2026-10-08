@@ -97,6 +97,10 @@ agent-device replay ~/.agent-device/sessions/e2e-2026-02-09T12-00-00-000Z.ad --s
   For a step without an annotation, `error.details.reason` is `selector_not_found`, as for a live
   command. If the app shows an empty accessibility tree during that wait, `error.details.reason`
   is `capture_sparse` instead; take a snapshot to see where the app is.
+- A step whose read names one element (`is` with a predicate other than `exists`/`absent`, or
+  `get attrs`) fails at once when its selector matches more than one element, with
+  `AMBIGUOUS_MATCH` as the divergence cause — the same code the live command reports, so an
+  ambiguous recorded screen is not replayed as a missing one.
 
 ## Run Maestro compatibility flows
 

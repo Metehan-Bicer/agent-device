@@ -2060,7 +2060,7 @@ agent-device is text 'id="greeting"' "Welcome back"
 - Supported predicates are `visible`, `hidden`, `exists`, `absent`, `editable`, `selected`, `focused`, and `text`.
 - `is visible` checks whether the resolved element is present in the current visible snapshot viewport. A node without its own rect still passes when a visible ancestor within the viewport provides the on-screen geometry.
 - `is exists` checks only whether the selector matches in the current snapshot.
-- A read that names one element — every predicate except `exists` and `absent` — fails with `error.details.reason: selector_ambiguous` and `error.details.matches` when the selector matches more than one node. That is not a missing element: narrow the selector or address one candidate by ref. `is exists`, `is absent`, `get text`, `find`, and `wait` keep their own match policies.
+- A read that names one element — every predicate except `exists` and `absent`, and `get attrs` — fails with `AMBIGUOUS_MATCH` when the selector matches more than one node, the same code an ambiguous `press` uses: `error.details.matches` carries the count and up to five candidate `@ref` lines are listed. That is not a missing element: narrow the selector or address one listed candidate by ref. `is exists`, `is absent`, `get text`, `find`, and `wait` keep their own match policies.
 - React Native renders each text as a pair of nodes that carry the same label. A label or text selector on such copy names one node, not the pair, so `is text` and `get attrs` answer instead of refusing. `find ... list` and `snapshot --json` still show both nodes.
 - `is absent` passes only when the selector has zero matches in one readable, complete, settled, unscoped, full-depth accessibility capture. It does not mean hidden; `--scope` and `--depth` are rejected, and sparse, unreadable, truncated, or unsettled captures fail closed.
 - A read that answers from the first capture after a `scroll`, `swipe`, or `gesture swipe` waits for two consecutive captures to agree. That capture, and a re-capture taken at once to recover or widen it, carry `postGestureOutcome` (`{ "kind", "gesture": { "action", "positionals" } }`) when stabilization proved something about the gesture. `is`, `get`, `find`, `wait`, and an interaction that captured it (such as `click`, `press`, or `fill`) report it in `error.details` or `data` and append a warning, and `snapshot` appends the warning.
@@ -4337,6 +4337,10 @@ agent-device replay ~/.agent-device/sessions/e2e-2026-02-09T12-00-00-000Z.ad --s
   For a step without an annotation, `error.details.reason` is `selector_not_found`, as for a live
   command. If the app shows an empty accessibility tree during that wait, `error.details.reason`
   is `capture_sparse` instead; take a snapshot to see where the app is.
+- A step whose read names one element (`is` with a predicate other than `exists`/`absent`, or
+  `get attrs`) fails at once when its selector matches more than one element, with
+  `AMBIGUOUS_MATCH` as the divergence cause — the same code the live command reports, so an
+  ambiguous recorded screen is not replayed as a missing one.
 
 ## Run Maestro compatibility flows
 
