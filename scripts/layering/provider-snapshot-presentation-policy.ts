@@ -11,9 +11,11 @@
 //   exports map cannot replace it: it restricts external specifiers, not the transitive walk
 //   into packages/capture-kit/src/snapshot/ or a provider-local `residue` property or assignment.
 
+import { genBFS } from '@statelyai/graph';
 import { parseSync } from 'oxc-parser';
 import type { LayeringViolation, ResolvedImportEdge } from './model.ts';
 import { memberPath, propertyName, visitAst } from './layering-ast.ts';
+import { ALL_EDGES, importGraphFromResolvedEdges } from '../depgraph/import-graph.ts';
 
 export const PROVIDER_SNAPSHOT_PRESENTATION_RULE = 'R73 provider-snapshot-presentation-ownership';
 export const IOS_SNAPSHOT_ACQUISITION_ENTRYPOINT =
@@ -38,9 +40,15 @@ export function providerSnapshotPresentationViolations(
   }
 
   const violations: LayeringViolation[] = [];
+  const reachableEdges = [...edgesByFile.values()].flat();
+  const graph = importGraphFromResolvedEdges(
+    reachableEdges.filter((edge) => !isPresentationTarget(edge.file)),
+    ALL_EDGES,
+    sources.keys(),
+  );
   for (const file of sources.keys()) {
     if (!PROVIDER_SOURCE.test(file)) continue;
-    violations.push(...presentationImportViolations(file, edgesByFile));
+    violations.push(...presentationImportViolations(file, edgesByFile, graph));
     violations.push(...residueViolations(file, sources.get(file)!));
   }
   return violations;
@@ -49,14 +57,14 @@ export function providerSnapshotPresentationViolations(
 function presentationImportViolations(
   providerFile: string,
   edgesByFile: ReadonlyMap<string, readonly ResolvedImportEdge[]>,
+  graph: ReturnType<typeof importGraphFromResolvedEdges>,
 ): LayeringViolation[] {
   const origins = new Map<string, ResolvedImportEdge>();
   const visited = new Set([providerFile]);
-  const queue = [providerFile];
   const violations: LayeringViolation[] = [];
 
-  while (queue.length > 0) {
-    const file = queue.shift()!;
+  for (const { id: file } of genBFS(graph, providerFile)) {
+    if (isPresentationTarget(file)) continue;
     for (const edge of edgesByFile.get(file) ?? []) {
       const origin = origins.get(file) ?? edge;
       if (isPresentationTarget(edge.target)) {
@@ -72,7 +80,6 @@ function presentationImportViolations(
       if (visited.has(edge.target)) continue;
       visited.add(edge.target);
       origins.set(edge.target, origin);
-      queue.push(edge.target);
     }
   }
   return violations;

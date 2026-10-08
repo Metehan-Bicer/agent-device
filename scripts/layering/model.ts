@@ -1,8 +1,14 @@
 import path from 'node:path';
 import { PLATFORMS } from '@agent-device/kernel/device';
+import { createGraph, genDFS, getStronglyConnectedComponents, getSubgraph } from '@statelyai/graph';
 import { parseSync } from 'oxc-parser';
 import { destructuredDynamicImportBindings, visitAst } from './layering-ast.ts';
 import { declaredRootModuleZone } from './root-module-zones.ts';
+import {
+  importGraphFromResolvedEdges,
+  STATIC_EDGES,
+  VALUE_EDGES,
+} from '../depgraph/import-graph.ts';
 
 export type ImportEdge = {
   spec: string;
@@ -397,91 +403,32 @@ export function resolveImportEdges(
 }
 
 export function findValueImportCycles(edges: readonly ResolvedImportEdge[]): string[][] {
-  const graph = new Map<string, Set<string>>();
-  for (const edge of edges) {
-    if (edge.dynamic || edge.typeOnly) continue;
-    const targets = graph.get(edge.file) ?? new Set<string>();
-    targets.add(edge.target);
-    graph.set(edge.file, targets);
-    if (!graph.has(edge.target)) graph.set(edge.target, new Set());
-  }
-
-  const indexByFile = new Map<string, number>();
-  const lowLinkByFile = new Map<string, number>();
-  const stack: string[] = [];
-  const onStack = new Set<string>();
-  const components: string[][] = [];
-  let nextIndex = 0;
-
-  function visit(file: string): void {
-    const index = nextIndex++;
-    indexByFile.set(file, index);
-    lowLinkByFile.set(file, index);
-    stack.push(file);
-    onStack.add(file);
-
-    for (const target of graph.get(file) ?? []) {
-      if (!indexByFile.has(target)) {
-        visit(target);
-        lowLinkByFile.set(file, Math.min(lowLinkByFile.get(file)!, lowLinkByFile.get(target)!));
-      } else if (onStack.has(target)) {
-        lowLinkByFile.set(file, Math.min(lowLinkByFile.get(file)!, indexByFile.get(target)!));
-      }
+  const graph = importGraphFromResolvedEdges(edges, VALUE_EDGES);
+  const selfCycleFiles = new Set(
+    graph.edges.filter((edge) => edge.sourceId === edge.targetId).map((edge) => edge.sourceId),
+  );
+  const components = getStronglyConnectedComponents(graph).filter(
+    (component) => component.length > 1 || selfCycleFiles.has(component[0]!.id),
+  );
+  const cycles = components.map((component) => {
+    const memberIds = component.map(({ id }) => id);
+    const componentGraph = getSubgraph(graph, memberIds);
+    const firstEdgeByFile = new Map<string, (typeof graph.edges)[number]>();
+    for (const edge of componentGraph.edges) {
+      if (!firstEdgeByFile.has(edge.sourceId)) firstEdgeByFile.set(edge.sourceId, edge);
     }
+    // Inside an SCC every file has an outgoing edge. DFS finds its first back edge before
+    // backtracking, so following only the first outgoing edge preserves the reported cycle.
+    const firstEdgeGraph = createGraph({
+      nodes: componentGraph.nodes,
+      edges: [...firstEdgeByFile.values()],
+    });
+    const path = [...genDFS(firstEdgeGraph, [...memberIds].sort()[0]!)].map(({ id }) => id);
+    const target = firstEdgeByFile.get(path.at(-1)!)!.targetId;
+    return [...path.slice(path.indexOf(target)), target];
+  });
 
-    if (lowLinkByFile.get(file) !== indexByFile.get(file)) return;
-    const component: string[] = [];
-    let member: string;
-    do {
-      member = stack.pop()!;
-      onStack.delete(member);
-      component.push(member);
-    } while (member !== file);
-    const selfCycle = component.length === 1 && graph.get(file)?.has(file);
-    if (component.length > 1 || selfCycle) components.push(component);
-  }
-
-  for (const file of graph.keys()) {
-    if (!indexByFile.has(file)) visit(file);
-  }
-  return components
-    .map((component) => findCyclePath(component, graph))
-    .sort((left, right) => left[0]!.localeCompare(right[0]!));
-}
-
-function findCyclePath(
-  component: readonly string[],
-  graph: ReadonlyMap<string, Set<string>>,
-): string[] {
-  const members = new Set(component);
-  const visited = new Set<string>();
-  const active = new Map<string, number>();
-  const stack: string[] = [];
-
-  function visit(file: string): string[] | null {
-    visited.add(file);
-    active.set(file, stack.length);
-    stack.push(file);
-    for (const target of graph.get(file) ?? []) {
-      if (!members.has(target)) continue;
-      const activeIndex = active.get(target);
-      if (activeIndex !== undefined) return [...stack.slice(activeIndex), target];
-      if (!visited.has(target)) {
-        const path = visit(target);
-        if (path) return path;
-      }
-    }
-    stack.pop();
-    active.delete(file);
-    return null;
-  }
-
-  for (const file of [...component].sort()) {
-    if (visited.has(file)) continue;
-    const path = visit(file);
-    if (path) return path;
-  }
-  throw new Error(`Expected a cycle inside strongly connected component: ${component.join(', ')}`);
+  return cycles.sort((left, right) => left[0]!.localeCompare(right[0]!));
 }
 
 function spineInversionPair(edge: ResolvedImportEdge): string | null {
@@ -566,48 +513,10 @@ export function largestTypeCycleSize(edges: readonly ResolvedImportEdge[]): numb
 
 /** Members of the largest value+type strongly-connected component, sorted. */
 export function largestTypeCycleMembers(edges: readonly ResolvedImportEdge[]): string[] {
-  const successors = new Map<string, string[]>();
-  for (const edge of edges) {
-    if (edge.dynamic) continue;
-    const list = successors.get(edge.file) ?? [];
-    list.push(edge.target);
-    successors.set(edge.file, list);
-  }
-
-  const index = new Map<string, number>();
-  const lowLink = new Map<string, number>();
-  const stack: string[] = [];
-  const onStack = new Set<string>();
-  let next = 0;
-  let biggest: string[] = [];
-
-  function visit(file: string): void {
-    index.set(file, next);
-    lowLink.set(file, next);
-    next++;
-    stack.push(file);
-    onStack.add(file);
-
-    for (const target of successors.get(file) ?? []) {
-      if (!index.has(target)) {
-        visit(target);
-        lowLink.set(file, Math.min(lowLink.get(file)!, lowLink.get(target)!));
-      } else if (onStack.has(target)) {
-        lowLink.set(file, Math.min(lowLink.get(file)!, index.get(target)!));
-      }
-    }
-
-    if (lowLink.get(file) !== index.get(file)) return;
-    const component: string[] = [];
-    let member: string;
-    do {
-      member = stack.pop()!;
-      onStack.delete(member);
-      component.push(member);
-    } while (member !== file);
-    if (component.length > biggest.length) biggest = component;
-  }
-
-  for (const file of successors.keys()) if (!index.has(file)) visit(file);
-  return biggest.sort();
+  return getStronglyConnectedComponents(importGraphFromResolvedEdges(edges, STATIC_EDGES))
+    .reduce<string[]>((largest, component) => {
+      if (component.length > largest.length) largest = component.map(({ id }) => id);
+      return largest;
+    }, [])
+    .sort();
 }
