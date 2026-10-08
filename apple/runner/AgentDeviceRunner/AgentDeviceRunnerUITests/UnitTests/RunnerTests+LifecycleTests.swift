@@ -140,16 +140,20 @@ extension RunnerTests {
       (.runningForeground, false),
     ]
     let foreground = XCUIApplication.State.runningForeground
+    let unknown = XCUIApplication.State.unknown
     let notRunning = XCUIApplication.State.notRunning
     let raiseRows: [(fullscreen: Bool?, state: XCUIApplication.State, expected: Bool)] = [
       (nil, foreground, false),
       (nil, .runningBackground, true),
+      (nil, unknown, true),
       (nil, notRunning, true),
       (false, foreground, false),
       (false, .runningBackground, true),
+      (false, unknown, true),
       (false, notRunning, true),
       (true, foreground, false),
       (true, .runningBackground, false),
+      (true, unknown, false),
       (true, notRunning, true),
     ]
     for row in states {
