@@ -15,11 +15,12 @@ import { formatSnapshotLine } from '@agent-device/capture-kit/snapshot-lines';
  * - `none` — nothing matched: `selector_not_found`, which genuinely means the
  *   element is not in the tree.
  * - `ambiguous` — N nodes matched and the row refuses to choose:
- *   `selector_ambiguous` with the match count and bounded candidate lines,
- *   shaped exactly like the acting rows' `AMBIGUOUS_MATCH` so every surface
- *   renders candidates from one reader. #2870: this used to be reported as
- *   `selector_not_found`, which to an agent reads as "the element does not
- *   exist" on a screen where it is plainly on display.
+ *   `AMBIGUOUS_MATCH`, the code the acting refusal already answers with
+ *   (ADR 0011's bounded-disclosure shape: count, capped candidate snapshot
+ *   lines, retryable refs), so no new machine vocabulary is introduced and
+ *   every surface renders candidates from the one existing reader. #2870:
+ *   this used to be reported as `selector_not_found`, which to an agent reads
+ *   as "the element does not exist" on a screen where it is plainly on display.
  * - `occluded` — the row ignores occlusion and cannot produce it; the caller
  *   keeps its own not-found shape.
  */
@@ -51,13 +52,12 @@ function selectorAmbiguousFailure(
     `Selector matched ${matchedNodes.length} elements: ${selector}`,
     {
       command,
-      reason: INTERACTION_ERROR_REASONS.selectorAmbiguous,
       selector,
       matches: matchedNodes.length,
       candidates: matchedNodes
         .slice(0, OBSERVATION_CANDIDATE_LIMIT)
         .map((candidate) => formatSnapshotLine(candidate, 0, false)),
-      hint: `List the matches with find '${selector}' list, then re-run with one printed @ref or a more specific selector.`,
+      hint: `Narrow the selector with role/id/longer text, or act on a printed candidate with a command that takes refs, such as press.`,
       ...details,
     },
   );

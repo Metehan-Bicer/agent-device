@@ -12,6 +12,7 @@ import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fix
 import {
   RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES,
   RN_TEXT_ECHO_NODES,
+  RN_TEXT_ECHO_OFFSET_RECT_NODES,
   UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES,
 } from '@agent-device/selectors/interaction-targeting-fixtures';
 
@@ -476,6 +477,11 @@ export function rnTextEchoReadSnapshot(): SnapshotState {
 /** The same label twice in distinct subtrees: nothing collapses here (#2870). */
 export function rnTextEchoDistinctSubtreeReadSnapshot(): SnapshotState {
   return makeSnapshotState(RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES);
+}
+
+/** The same label mirrored at a rect beyond wrapper slack: a second run of text, not a mirror. */
+export function rnTextEchoOffsetRectReadSnapshot(): SnapshotState {
+  return makeSnapshotState(RN_TEXT_ECHO_OFFSET_RECT_NODES);
 }
 
 /**

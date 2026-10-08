@@ -8,6 +8,7 @@ import {
   createSelectorDevice,
   observationStagesSnapshot,
   rnTextEchoDistinctSubtreeReadSnapshot,
+  rnTextEchoOffsetRectReadSnapshot,
   rnTextEchoReadSnapshot,
   skippedAlternativeSelectorSnapshot,
   unverifiedWrapperChainReadSnapshot,
@@ -56,8 +57,10 @@ test('get attrs reports the ambiguity it refuses as an ambiguity, not an absence
     );
 
   assert.ok(error instanceof AppError, 'get attrs must refuse rather than guess a duplicate');
+  // Dispatch is on the code the acting refusal already uses, plus the match
+  // count — no new reason vocabulary (#2870 review).
   assert.equal(error.code, 'AMBIGUOUS_MATCH');
-  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_ambiguous');
+  assert.equal((error.details as { matches?: number } | undefined)?.matches, 2);
 });
 
 test('is reports the ambiguity it refuses as an ambiguity, not an absence (readUnique row)', async () => {
@@ -72,10 +75,7 @@ test('is reports the ambiguity it refuses as an ambiguity, not an absence (readU
 
   assert.ok(error instanceof AppError, 'is must refuse rather than answer about one duplicate');
   assert.equal(error.code, 'AMBIGUOUS_MATCH');
-  const details = error.details as
-    | { reason?: string; matches?: number; candidates?: string[] }
-    | undefined;
-  assert.equal(details?.reason, 'selector_ambiguous');
+  const details = error.details as { matches?: number; candidates?: string[] } | undefined;
   // The count is the whole point of the outcome (#2870): an agent narrows a
   // selector it knows matched twice without another snapshot round trip.
   assert.equal(details?.matches, 2);
@@ -100,7 +100,13 @@ test('a read with no match at all still reports selector_not_found', async () =>
 
   assert.ok(error instanceof AppError);
   assert.equal(error.code, 'COMMAND_FAILED');
-  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_not_found');
+  const details = error.details as { reason?: string; matches?: unknown; candidates?: unknown };
+  assert.equal(details.reason, 'selector_not_found');
+  // The absence outcome carries no match count and no candidate list: an
+  // ambiguity-shaped field on a zero-match failure would let a consumer
+  // reconstruct the flattened outcome the fix removed.
+  assert.equal(details.matches, undefined);
+  assert.equal(details.candidates, undefined);
 });
 
 /**
@@ -150,7 +156,27 @@ test('the same label in two subtrees is still an ambiguity, not a collapse (#287
     );
 
   assert.ok(error instanceof AppError, 'distinct subtrees are two elements, not a mirror');
-  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_ambiguous');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+});
+
+/**
+ * The rect negative to the RN collapse above, at the command surface: identical
+ * label on a parent/child pair whose rects differ by more than wrapper slack is
+ * a second run of text at its own position, so the strict read keeps refusing.
+ */
+test('the same label mirrored at an offset rect stays an ambiguity (#2870)', async () => {
+  const device = createSelectorDevice(rnTextEchoOffsetRectReadSnapshot());
+
+  const error = await device.selectors
+    .is({ session: 'default', predicate: 'visible', selector: RN_TEXT_SELECTOR })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof AppError, 'a distinct rect is a second run of text, not a mirror');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  assert.equal((error.details as { matches?: number } | undefined)?.matches, 2);
 });
 
 /**

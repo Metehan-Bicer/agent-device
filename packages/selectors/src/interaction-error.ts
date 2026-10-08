@@ -1,14 +1,6 @@
 /** Machine-readable `error.details.reason` values shared by interaction producers and adapters. */
 export const INTERACTION_ERROR_REASONS = {
   selectorNotFound: 'selector_not_found',
-  /**
-   * The selector matched, but more than one node did and the caller's row refuses to choose.
-   * Distinct from `selector_not_found`, which is proof of absence: an ambiguous read is on
-   * screen right now. `details.matches` names the count and `details.candidates` lists bounded
-   * snapshot lines, so a consumer narrows without a snapshot round trip rather than concluding
-   * the element does not exist (#2870).
-   */
-  selectorAmbiguous: 'selector_ambiguous',
   predicateFailed: 'predicate_failed',
   /**
    * An `@ref` names no node of the stored tree: stale, or never issued. `details.ref` carries the
