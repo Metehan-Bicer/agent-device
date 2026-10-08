@@ -1,10 +1,9 @@
 import type { OwnedProcessRecord } from '@agent-device/contracts/platform-runtime-host';
 import {
   isProcessAlive,
-  isProcessZombie,
-  readProcessCommand,
-  readProcessStartTime,
+  readProcessIdentityFacts,
   waitForProcessExit,
+  type HostProcessIdentityFacts,
 } from './host-process.ts';
 import type { OwnedProcessRecordRead, OwnedProcessRecordStore } from './owned-process-record.ts';
 
@@ -163,17 +162,22 @@ async function reapOwnedProcess(
   record: OwnedProcessRecord,
   policy: Pick<ReapPolicy, 'termTimeoutMs' | 'killTimeoutMs'>,
 ): Promise<'terminated' | 'missing' | 'ownership-lost'> {
-  const initial = inspectOwnedProcess(record);
+  const initial = await inspectOwnedProcess(record);
   if (initial !== undefined) return initial;
   signalBestEffort(record.pid, initialSignalFor(record));
   return await escalateOwnedProcess(record, policy);
 }
 
-function inspectOwnedProcess(record: OwnedProcessRecord): 'missing' | 'ownership-lost' | undefined {
-  if (record.pid === process.pid || !isProcessAlive(record.pid) || isProcessZombie(record.pid)) {
-    return 'missing';
-  }
-  return matchesRecord(record) ? undefined : 'ownership-lost';
+async function inspectOwnedProcess(
+  record: OwnedProcessRecord,
+): Promise<'missing' | 'ownership-lost' | undefined> {
+  if (record.pid === process.pid || !isProcessAlive(record.pid)) return 'missing';
+  // One off-loop identity read answers the whole decision. Per-field probes
+  // would spend a fresh process-tool startup on every record on hosts where
+  // each read spawns a query tool rather than one cheap `ps`.
+  const facts = await readProcessIdentityFacts(record.pid);
+  if (facts.zombie) return 'missing';
+  return matchesFacts(record, facts) ? undefined : 'ownership-lost';
 }
 
 function initialSignalFor(record: OwnedProcessRecord): NodeJS.Signals {
@@ -197,15 +201,14 @@ async function waitForOwnedProcessExit(
   timeoutMs: number,
 ): Promise<'exited' | 'owned-alive' | 'ownership-lost'> {
   await waitForProcessExit(record.pid, timeoutMs);
-  if (!isProcessAlive(record.pid) || isProcessZombie(record.pid)) return 'exited';
-  return matchesRecord(record) ? 'owned-alive' : 'ownership-lost';
+  if (!isProcessAlive(record.pid)) return 'exited';
+  const facts = await readProcessIdentityFacts(record.pid);
+  if (facts.zombie) return 'exited';
+  return matchesFacts(record, facts) ? 'owned-alive' : 'ownership-lost';
 }
 
-function matchesRecord(record: OwnedProcessRecord): boolean {
-  return (
-    readProcessStartTime(record.pid) === record.startTime &&
-    readProcessCommand(record.pid) === record.command
-  );
+function matchesFacts(record: OwnedProcessRecord, facts: HostProcessIdentityFacts): boolean {
+  return facts.startTime === record.startTime && facts.command === record.command;
 }
 
 function signalBestEffort(pid: number, signal: NodeJS.Signals): void {

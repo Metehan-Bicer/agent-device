@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import {
   isProcessAlive,
   isProcessZombie,
+  readHostProcessIdentityObservations,
   readProcessStartTime,
   type HostProcessIdentityObservation,
 } from './host-process.ts';
@@ -69,7 +70,15 @@ export function classifyOwnerLiveness(params: {
   owner: Pick<OwnerIdentity, 'pid' | 'startTime'>;
   stateDir?: string;
 }): OwnerLiveness {
-  return classifyOwnerLivenessFromObservation(params);
+  // One process-table snapshot answers the whole judgment. State and start time
+  // read as two probes double the cost of every lock-ownership poll on hosts
+  // where a probe starts a fresh process tool, and one snapshot also judges both
+  // facts at the same instant instead of stitching two separate host answers.
+  if (!isProcessPid(params.owner.pid)) return 'unknown';
+  if (!isProcessAlive(params.owner.pid)) return 'owner-process-dead';
+  const observation =
+    readHostProcessIdentityObservations([params.owner.pid]).get(params.owner.pid) ?? null;
+  return classifyOwnerLivenessFromObservation(params, observation);
 }
 
 export function classifyOwnerLivenessFromObservation(

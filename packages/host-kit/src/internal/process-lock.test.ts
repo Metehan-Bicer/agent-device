@@ -22,6 +22,21 @@ vi.mock('./host-process.ts', async (importOriginal) => {
       processProbe.observe?.();
       return actual.readProcessStartTime(pid);
     },
+    // Classification judges from one snapshot; the fixture answers it from the
+    // same zombie state and real start times as the per-field probes.
+    readHostProcessIdentityObservations: (pids: Iterable<number>) => {
+      const observations = new Map<number, { state: string; startTime: string }>();
+      for (const pid of pids) {
+        processProbe.observe?.();
+        const startTime = actual.readProcessStartTime(pid);
+        if (!zombiePids.has(pid) && startTime === null) continue;
+        observations.set(pid, {
+          state: zombiePids.has(pid) ? 'ZN' : 'Ss',
+          startTime: startTime ?? 'zombie-snapshot',
+        });
+      }
+      return observations;
+    },
   };
 });
 

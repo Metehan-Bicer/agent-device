@@ -132,10 +132,11 @@ export function readProcessCommand(pid: number): string | null {
   return readProcessField(pid, 'command=');
 }
 
-// A zombie passes kill(pid, 0) and still reports its original lstart, so both
-// isProcessAlive and the start-time identity check read it as live; only the
-// process state exposes that it already terminated.
+// A terminated Windows process leaves the CIM table rather than lingering in it
+// unreaped, so no live pid on that host can be a zombie: the question is answered
+// without a process-table probe, and exit proof stays liveness-and-lifetime.
 export function isProcessZombie(pid: number): boolean {
+  if (isWindowsHostPlatform()) return false;
   return readProcessField(pid, 'state=')?.startsWith('Z') ?? false;
 }
 
@@ -267,7 +268,12 @@ function windowsProcessQueryArgs(pids: readonly number[]): string[] {
           .map((pid) => `ProcessId=${pid}`)
           .join(' OR ')}'`
       : 'Get-CimInstance -ClassName Win32_Process';
-  return ['-NoProfile', '-NonInteractive', '-Command', `${source}${WINDOWS_PROCESS_ROW_BODY}`];
+  // PowerShell writes redirected stdout in the OEM console code page, which would
+  // mojibake any non-ASCII command line the identity check later compares
+  // byte-for-byte; the console is pinned to UTF-8 so the pipe matches the
+  // UTF-8 decode Node applies.
+  const command = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ${source}${WINDOWS_PROCESS_ROW_BODY}`;
+  return ['-NoProfile', '-NonInteractive', '-Command', command];
 }
 
 function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {

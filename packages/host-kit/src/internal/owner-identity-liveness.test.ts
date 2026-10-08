@@ -11,6 +11,21 @@ vi.mock('./host-process.ts', () => ({
   isProcessAlive: mockIsProcessAlive,
   isProcessZombie: mockIsProcessZombie,
   readProcessStartTime: mockReadProcessStartTime,
+  // The classification consumes one snapshot, so the fixture answers it from
+  // the same state as the per-field probes and drops rows whose start time the
+  // host could not read.
+  readHostProcessIdentityObservations: (pids: Iterable<number>) => {
+    const observations = new Map<number, { state: string; startTime: string }>();
+    for (const pid of pids) {
+      const startTime = mockReadProcessStartTime(pid);
+      if (startTime === null) continue;
+      observations.set(pid, {
+        state: mockIsProcessZombie(pid) ? 'ZN' : 'Ss',
+        startTime,
+      });
+    }
+    return observations;
+  },
 }));
 
 import { classifyOwnerLiveness, classifyOwnerLivenessFromObservation } from './owner-identity.ts';

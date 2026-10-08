@@ -8,15 +8,22 @@ const processState = vi.hoisted(() => ({
   alive: new Set<number>(),
   starts: new Map<number, string>(),
   commands: new Map<number, string>(),
+  zombiePids: new Set<number>(),
   waitExits: true,
 }));
 
 vi.mock('./host-process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./host-process.ts')>()),
   isProcessAlive: (pid: number) => processState.alive.has(pid),
-  isProcessZombie: () => false,
+  isProcessZombie: (pid: number) => processState.zombiePids.has(pid),
   readProcessStartTime: (pid: number) => processState.starts.get(pid) ?? null,
   readProcessCommand: (pid: number) => processState.commands.get(pid) ?? null,
+  readProcessIdentityFacts: (pid: number) =>
+    Promise.resolve({
+      startTime: processState.starts.get(pid) ?? null,
+      command: processState.commands.get(pid) ?? null,
+      zombie: processState.zombiePids.has(pid) ? true : processState.alive.has(pid) ? false : null,
+    }),
   waitForProcessExit: async (pid: number) => {
     if (processState.waitExits) processState.alive.delete(pid);
     return true;
@@ -30,6 +37,7 @@ beforeEach(() => {
   processState.alive.clear();
   processState.starts.clear();
   processState.commands.clear();
+  processState.zombiePids.clear();
   processState.waitExits = true;
 });
 

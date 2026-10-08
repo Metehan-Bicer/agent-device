@@ -72,11 +72,15 @@ test('the Windows command read answers the daemon-identity pattern from CommandL
   });
 });
 
-test('the Windows state read never reports a zombie for a live row', () => {
+test('the Windows host answers the zombie question without a process-table probe', () => {
+  // A terminated Windows process leaves the CIM table rather than lingering in
+  // it, so probing state per record could never reveal a zombie. The answer is
+  // false with zero queries.
   windowsPlatform(() => {
-    cimAnswers(`${DAEMON_ROW}\r\n`);
     assert.equal(isProcessZombie(DAEMON_PID), false);
+    assert.equal(isProcessZombie(4343), false);
   });
+  assert.equal(mockRunCmdSync.mock.calls.length, 0);
 });
 
 test('a CIM query that names no row for the pid is unknown, not death', () => {
@@ -166,7 +170,10 @@ test('the Windows process list parses CIM rows through the injected command runn
   );
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.cmd, 'powershell.exe');
-  assert.match(String(calls[0]!.args[3]), /^Get-CimInstance -ClassName Win32_Process \|/);
+  assert.match(
+    String(calls[0]!.args[3]),
+    /^\[Console\]::OutputEncoding=\[System\.Text\.Encoding\]::UTF8; Get-CimInstance -ClassName Win32_Process \|/,
+  );
   assert.equal(calls[0]!.timeoutMs, 2_000);
   assert.deepEqual(processes, [
     {
