@@ -40,6 +40,7 @@ export function bindAppleSnapshotRuntime(
     resolveInteractor: host.localInteractors.resolve,
   });
   const captureSnapshot = async (input: CaptureSnapshotInput) => {
+    if (input.options?.observeOnly === true) return await appSnapshot.captureSnapshot(input);
     const helperSurface = isMacOs(request.device)
       ? macOsHelperSurface(input.options?.surface, request.appBackend)
       : undefined;

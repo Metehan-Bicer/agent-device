@@ -114,6 +114,7 @@ extension RunnerTests {
     let app: XCUIApplication
     /// Set when `app` is a system surface served in place over the still-bound session app (#2438).
     var systemSurface: SystemSurfaceHost? = nil
+    var observation: SnapshotObservationPayload? = nil
   }
 
   enum ActiveCommandPreparation {
@@ -494,6 +495,26 @@ extension RunnerTests {
     command: Command,
     routeToSpringboard: Bool = false
   ) -> ActiveCommandPreparation {
+    if command.command == .snapshot, command.observeOnly == true {
+#if os(iOS)
+      guard command.appBundleId?.trimmedNonEmpty != nil else {
+        return .response(observeOnlyUnavailableResponse())
+      }
+      let observedApp = resolveAppWithoutActivation(command: command)
+      let reportedState = observedApp.state
+      guard reportedState == .runningForeground else {
+        return .response(observeOnlyUnavailableResponse())
+      }
+      return .context(ActiveCommandContext(
+        app: observedApp,
+        observation: SnapshotObservationPayload(appState: Self.applicationStateName(reportedState))
+      ))
+#else
+      return .response(Response(ok: false, error: ErrorPayload(
+        code: "UNSUPPORTED_OPERATION", message: "observe-only snapshot is supported on iOS and iPadOS only"
+      )))
+#endif
+    }
     if routeToSpringboard {
       return .context(ActiveCommandContext(app: springboard))
     }
@@ -642,6 +663,14 @@ extension RunnerTests {
     }
     #endif
     return XCUIApplication(bundleIdentifier: host.bundleId).state
+  }
+
+  func observeOnlyUnavailableResponse() -> Response {
+    Response(ok: false, error: ErrorPayload(
+      code: "OBSERVATION_UNAVAILABLE",
+      message: "The session app cannot be observed without activation.",
+      hint: "XCUIApplication must report runningForeground before and after capture. This state report does not prove screen ownership (#2696)."
+    ))
   }
 
   func currentXCTestFailureCount() -> Int {

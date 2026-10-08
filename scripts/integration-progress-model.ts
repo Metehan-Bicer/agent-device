@@ -373,6 +373,13 @@ function summarizeProviderScenarioFlagExclusions() {
       keys: ['snapshotCustomActions'],
     },
     {
+      // Observe-only capture is admitted only for a local iOS runner session; provider-owned
+      // sessions refuse it before capture, so no provider scenario can reach the observed path.
+      name: 'local iOS observe-only snapshot',
+      owner: 'Apple interactor observe-only and runner XCTest dispatch tests',
+      keys: ['snapshotObserveOnly'],
+    },
+    {
       // The crop is daemon-level post-processing: the platform write happens first, then the
       // daemon crops the PNG against a fresh snapshot whose pixel/tree identity the fake
       // provider scenario fixtures cannot fabricate. Covered instead by the daemon crop-leaf

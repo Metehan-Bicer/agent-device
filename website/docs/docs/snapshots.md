@@ -25,6 +25,7 @@ agent-device diff snapshot               # Structural diff vs previous session b
 | `-s <scope>`     | Scope to label, value, identifier, or `@ref` ([Scope a snapshot](#scope-a-snapshot)) |
 | `--raw`          | Full provider tree instead of the visible-first agent view                       |
 | `--actions`      | Name the custom accessibility actions merged inside an element (iOS simulator)   |
+| `--observe-only` | Read the session app without activating it or repairing foreground (local iOS and iPadOS sessions only) |
 | `--force-full`   | Re-emit the full tree even when it is unchanged since the previous snapshot      |
 | `--timeout <ms>` | Maximum wall-clock time for the snapshot command                                 |
 
@@ -42,6 +43,36 @@ agent-device diff snapshot               # Structural diff vs previous session b
   element does not mean the element has no actions.
 - You can't combine it with `--raw`. The CLI, the Node client, and MCP all reject the pair with
   `INVALID_ARGS` before touching the device.
+
+## iOS observe-only snapshots
+
+`agent-device snapshot --observe-only` reads the bound iOS or iPadOS app without activating it or
+repairing its foreground state. An ordinary snapshot brings a backgrounded session app back and
+discloses that with `targetActivation`; an observe-only snapshot refuses instead, so the screen is
+left exactly as it was. Other platforms, provider-owned sessions, and `--diff` are unsupported.
+
+The runner refuses with `OBSERVATION_UNAVAILABLE` (also named by `details.runnerErrorCode`) unless
+the app reports `runningForeground` before and after the capture under one process identity. It does
+not substitute SpringBoard or a presented system surface. The host refuses with `COMMAND_FAILED` and
+`details.reason: "observation-unavailable"` when a runner answers an observe-only request without
+`observation` or with a `targetActivation` fact. Successful JSON includes:
+
+```json
+{
+  "observation": {
+    "mode": "observe-only",
+    "activationPerformed": false,
+    "appState": "runningForeground",
+    "appStateSource": "xcuiapplication-state"
+  }
+}
+```
+
+This reports **XCUIApplication state, not verified foreground ownership**: XCTest can report that
+state incorrectly when another app owns the screen ([#2696](https://github.com/callstack/agent-device/issues/2696)).
+Observe-only results never carry `targetActivation`. Regular snapshots retain their existing repair
+and disclosure behavior ([#2682](https://github.com/callstack/agent-device/issues/2682),
+[#2694](https://github.com/callstack/agent-device/issues/2694)).
 
 ## Keep snapshots small and current
 

@@ -224,6 +224,26 @@ test('every Apple request site builds exactly its golden runner request', async 
     );
     captured.push([name, onlyRequest(name, calls)]);
   }
+  const observationCalls: RecordedRunnerCall[] = [];
+  await createAppleInteractor(
+    IOS_SIMULATOR,
+    { appBundleId: APP },
+    recordingRunnerProvider(observationCalls, {
+      snapshot: {
+        nodes: [{ index: 0, type: 'Application', rect: { x: 0, y: 0, width: 390, height: 844 } }],
+        observation: {
+          mode: 'observe-only',
+          activationPerformed: false,
+          appState: 'runningForeground',
+          appStateSource: 'xcuiapplication-state',
+        },
+      },
+    }),
+  ).snapshot({ appBundleId: APP, observeOnly: true });
+  captured.push([
+    'ios-simulator.interactor-snapshot.observe-only',
+    onlyRequest('ios-simulator.interactor-snapshot.observe-only', observationCalls),
+  ]);
   const dir = await mkdtempForTest('agent-device-runner-requests-');
   const runnerScreenshot = path.join(dir, 'runner.png');
   fs.writeFileSync(runnerScreenshot, '');

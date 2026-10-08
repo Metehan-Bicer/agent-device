@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
+import { AppError } from '@agent-device/kernel/errors';
 import type { SnapshotResult } from '@agent-device/contracts/interactor-types';
-import { IOS_SIMULATOR } from './device-fixtures.ts';
-import type { AppleRunnerProvider } from '../runner/index.ts';
+import { IOS_SIMULATOR, IPADOS_SIMULATOR } from './device-fixtures.ts';
+import type { AppleRunnerProvider, RunnerCommand } from '../runner/index.ts';
 import { createAppleInteractor } from '../interactor.ts';
 
 const HEALTHY_TREE = {
@@ -47,6 +48,64 @@ test('a capture whose own command repaired foreground discloses it and keeps the
   assert.match(
     String(snapshot.warnings?.find((warning) => warning.includes('not foreground'))),
     /prior state runningBackground[\s\S]*reason stale_target/,
+  );
+});
+
+test.each([
+  ['iOS', IOS_SIMULATOR],
+  ['iPadOS', IPADOS_SIMULATOR],
+] as const)(
+  'observe-only on %s forwards the policy and publishes sourced state without activation disclosure',
+  async (_leaf, device) => {
+    const observation = {
+      mode: 'observe-only',
+      activationPerformed: false,
+      appState: 'runningForeground',
+      appStateSource: 'xcuiapplication-state',
+    };
+    const commands: RunnerCommand[] = [];
+    const runnerProvider: AppleRunnerProvider = {
+      hasLiveSession: () => true,
+      runCommand: async (_device, command) => {
+        commands.push(command);
+        return { ...HEALTHY_TREE, observation };
+      },
+    };
+    const snapshot = (await createAppleInteractor(device, {}, runnerProvider).snapshot({
+      appBundleId: 'com.example.app',
+      observeOnly: true,
+    })) as SnapshotResult;
+    assert.deepEqual(
+      commands.map((command) => [command.command, command.observeOnly]),
+      [['snapshot', true]],
+    );
+    assert.deepEqual(snapshot.observation, observation);
+    assert.equal('targetActivation' in snapshot, false);
+  },
+);
+
+test('observe-only refuses absent provenance rather than crediting a legacy activating runner', async () => {
+  await assert.rejects(
+    interactorServing(HEALTHY_TREE).snapshot({ appBundleId: 'com.example.app', observeOnly: true }),
+    (error: unknown) =>
+      error instanceof AppError && error.details?.reason === 'observation-unavailable',
+  );
+});
+
+test('observe-only refuses a contradictory activation fact', async () => {
+  await assert.rejects(
+    interactorServing({
+      ...HEALTHY_TREE,
+      observation: {
+        mode: 'observe-only',
+        activationPerformed: false,
+        appState: 'runningForeground',
+        appStateSource: 'xcuiapplication-state',
+      },
+      targetActivation: { reason: 'stale_target', priorState: 3 },
+    }).snapshot({ appBundleId: 'com.example.app', observeOnly: true }),
+    (error: unknown) =>
+      error instanceof AppError && error.details?.reason === 'observation-unavailable',
   );
 });
 

@@ -9,6 +9,15 @@ export const IOS_SIMULATOR: DeviceInfo = {
   booted: true,
 };
 
+export const IPADOS_SIMULATOR: DeviceInfo = {
+  platform: 'apple',
+  id: 'sim-ipad-1',
+  name: 'iPad Pro 13-inch (M4)',
+  kind: 'simulator',
+  appleOs: 'ipados',
+  booted: true,
+};
+
 export const IOS_DEVICE: DeviceInfo = {
   platform: 'apple',
   id: 'ios-device-1',

@@ -129,6 +129,18 @@ export function isHandheldAppleSimulator(
   return appleOs === 'ios' || appleOs === 'ipados';
 }
 
+/**
+ * The iPhone/iPad leaf on a simulator or hardware, including legacy records that predate the
+ * stored `appleOs` discriminant. Excludes tvOS, visionOS, the macOS host, and non-Apple platforms.
+ */
+export function isHandheldAppleDevice(
+  device: Pick<DeviceInfo, 'platform' | 'target' | 'appleOs'>,
+): boolean {
+  if (!isIosFamily(device)) return false;
+  const appleOs = resolveDeviceAppleOs(device);
+  return appleOs === 'ios' || appleOs === 'ipados';
+}
+
 export function isMobilePlatform(device: Pick<DeviceInfo, 'platform' | 'appleOs'>): boolean {
   // Phone/tablet device family: Android plus every Apple OS except the macOS desktop
   // host. Preserves the pre-collapse `platform === 'ios' || platform === 'android'`

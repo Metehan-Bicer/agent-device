@@ -37,6 +37,8 @@ import {
   type BoundNativeTextRead,
 } from './selector-operation-binding.ts';
 import { errorResponse } from '@agent-device/kernel/contracts';
+import { AppError } from '@agent-device/kernel/errors';
+import { isHandheldAppleDevice } from '@agent-device/kernel/device';
 
 export type SnapshotRuntimeRouteParams = {
   req: DaemonRequest;
@@ -142,6 +144,15 @@ export async function resolveBoundSnapshotCaptureRuntime(
     req.flags,
     params.sessionRef,
   );
+  if (
+    req.flags?.snapshotObserveOnly === true &&
+    (command !== 'snapshot' || !isHandheldAppleDevice(device) || !session?.appBundleId)
+  ) {
+    throw new AppError(
+      'UNSUPPORTED_OPERATION',
+      'observe-only snapshot requires an iOS or iPadOS app session.',
+    );
+  }
   const resolvedScope = resolveSnapshotScope(req.flags?.snapshotScope, session);
   if (!resolvedScope.ok) return { ok: false, response: resolvedScope };
 

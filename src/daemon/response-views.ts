@@ -37,6 +37,7 @@ function snapshotView(data: DaemonResponseData, level: ResponseLevel): DaemonRes
     'viewport',
     'snapshotQuality',
     'targetActivation',
+    'observation',
     'warnings',
     'fallbackScreenshotPath',
     'artifacts',

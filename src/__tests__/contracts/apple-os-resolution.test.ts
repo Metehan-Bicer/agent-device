@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { isHandheldAppleSimulator, resolveDeviceAppleOs } from '@agent-device/kernel/device';
 import {
+  isHandheldAppleDevice,
+  isHandheldAppleSimulator,
+  resolveDeviceAppleOs,
+} from '@agent-device/kernel/device';
+import {
+  ANDROID_EMULATOR,
   IOS_DEVICE,
   IOS_SIMULATOR,
   IPADOS_SIMULATOR,
@@ -28,4 +33,16 @@ test('isHandheldAppleSimulator admits only an iPhone or iPad simulator leaf', ()
   assert.equal(isHandheldAppleSimulator(VISIONOS_SIMULATOR), false);
   assert.equal(isHandheldAppleSimulator(IOS_DEVICE), false);
   assert.equal(isHandheldAppleSimulator(MACOS_DEVICE), false);
+});
+
+test('isHandheldAppleDevice admits iPhone and iPad leaves on simulators, hardware, and legacy records', () => {
+  const { appleOs: _appleOs, ...legacyIosDevice } = IOS_DEVICE;
+  assert.equal(isHandheldAppleDevice(IOS_SIMULATOR), true);
+  assert.equal(isHandheldAppleDevice(IPADOS_SIMULATOR), true);
+  assert.equal(isHandheldAppleDevice(IOS_DEVICE), true);
+  assert.equal(isHandheldAppleDevice(legacyIosDevice), true);
+  assert.equal(isHandheldAppleDevice(TVOS_SIMULATOR), false);
+  assert.equal(isHandheldAppleDevice(VISIONOS_SIMULATOR), false);
+  assert.equal(isHandheldAppleDevice(MACOS_DEVICE), false);
+  assert.equal(isHandheldAppleDevice(ANDROID_EMULATOR), false);
 });

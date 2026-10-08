@@ -67,6 +67,73 @@ extension RunnerTests {
   // lane (ci.yml) — see the classification convention in RunnerTests.swift.
 #if os(iOS)
   @MainActor
+  func testObserveOnlySnapshotRefusesBackgroundWithoutActivationOrDisclosure() throws {
+    app.launch()
+    XCUIDevice.shared.press(.home)
+    XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+    pendingTargetActivation = nil
+    defer { app.terminate() }
+    let command = try runnerCommandFixture(
+      "{\"command\":\"snapshot\",\"appBundleId\":\"com.callstack.agentdevice.runner\",\"observeOnly\":true}"
+    )
+    guard case .response(let response) = prepareActiveCommandContext(command: command) else {
+      return XCTFail("observe-only must refuse a background target")
+    }
+    XCTAssertFalse(response.ok)
+    XCTAssertEqual(response.error?.code, "OBSERVATION_UNAVAILABLE")
+    XCTAssertEqual(app.state, .runningBackground)
+    XCTAssertNil(pendingTargetActivation)
+    XCTAssertNil(response.data?.targetActivation)
+  }
+
+  @MainActor
+  func testObserveOnlySnapshotReportsStateWithoutBindingOrActivatingTarget() throws {
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+    invalidateCachedTarget(reason: "unit_test_setup")
+    pendingTargetActivation = nil
+    defer { app.terminate() }
+    let command = try runnerCommandFixture(
+      "{\"command\":\"snapshot\",\"appBundleId\":\"com.callstack.agentdevice.runner\",\"observeOnly\":true}"
+    )
+    guard case .context(let context) = prepareActiveCommandContext(command: command) else {
+      return XCTFail("observe-only must accept the reported foreground state")
+    }
+    XCTAssertEqual(context.observation?.mode, "observe-only")
+    XCTAssertEqual(context.observation?.activationPerformed, false)
+    XCTAssertEqual(context.observation?.appState, "runningForeground")
+    XCTAssertEqual(context.observation?.appStateSource, "xcuiapplication-state")
+    XCTAssertNil(context.systemSurface)
+    XCTAssertNil(mainOwned.bundleId)
+    XCTAssertNil(pendingTargetActivation)
+  }
+
+  @MainActor
+  func testRegularSnapshotStillRepairsBackgroundAndDisclosesPriorState() throws {
+    app.launch()
+    mainOwned.app = app
+    mainOwned.bundleId = "com.callstack.agentdevice.runner"
+    XCUIDevice.shared.press(.home)
+    XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+    pendingTargetActivation = nil
+    defer {
+      invalidateCachedTarget(reason: "unit_test_cleanup")
+      pendingTargetActivation = nil
+      app.terminate()
+    }
+    let command = try runnerCommandFixture(
+      "{\"command\":\"snapshot\",\"appBundleId\":\"com.callstack.agentdevice.runner\"}"
+    )
+    guard case .context(let context) = prepareActiveCommandContext(command: command) else {
+      return XCTFail("regular snapshot must keep the foreground repair")
+    }
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+    XCTAssertNil(context.observation)
+    XCTAssertEqual(pendingTargetActivation?.priorState, Int(XCUIApplication.State.runningBackground.rawValue))
+    XCTAssertEqual(pendingTargetActivation?.reason, "stale_target")
+  }
+
+  @MainActor
   func testMissingBundleCommandInvalidatesCompleteCachedTargetState() throws {
     app.launch()
     mainOwned.app = app

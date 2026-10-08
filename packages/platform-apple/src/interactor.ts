@@ -11,6 +11,7 @@ import {
   withAppleRunnerProvider,
   type AppleRunnerCommandExecutor,
   type AppleRunnerProvider,
+  type RunnerCommand,
 } from './runner/index.ts';
 import { toAppleTvRemoteButton } from '@agent-device/contracts/tv-remote';
 import { SCREENSHOT_FULLSCREEN_REASONS } from '@agent-device/contracts/capture';
@@ -244,21 +245,13 @@ async function captureAppleRunnerSnapshot(
       async () =>
         await runAppleRunnerCommand(
           device,
-          {
-            command: 'snapshot',
-            appBundleId: options?.appBundleId,
-            interactiveOnly: options?.interactiveOnly,
-            preferredBackend: options?.preferredBackend,
-            customActions: options?.customActions,
-            depth: options?.depth,
-            scope: options?.scope,
-            raw: options?.raw,
-          },
+          runnerSnapshotCommand(options),
           mergeRunnerCallSignal(runnerOpts, options?.signal),
         ),
       { backend: 'xctest' },
     ),
   );
+  assertSnapshotObservationResponse(options, result);
   assertReportedRunnerSnapshotNodes(device, options, result);
   const warnings = runnerSnapshotWarnings(result);
   const presentation = presentRunnerSnapshotForDevice(device, options, result);
@@ -272,8 +265,36 @@ async function captureAppleRunnerSnapshot(
     ...(result.systemSurface ? { systemSurface: result.systemSurface } : {}),
     ...(result.keyboard ? { keyboard: result.keyboard } : {}),
     ...(result.targetActivation ? { targetActivation: result.targetActivation } : {}),
+    ...(result.observation ? { observation: result.observation } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+function runnerSnapshotCommand(options: SnapshotOptions | undefined): RunnerCommand {
+  const { appBundleId, interactiveOnly, preferredBackend, customActions, depth, scope, raw } =
+    options ?? {};
+  return {
+    command: 'snapshot',
+    appBundleId,
+    interactiveOnly,
+    preferredBackend,
+    customActions,
+    ...(options?.observeOnly === true ? { observeOnly: true } : {}),
+    depth,
+    scope,
+    raw,
+  };
+}
+
+function assertSnapshotObservationResponse(
+  options: SnapshotOptions | undefined,
+  result: AppleRunnerSnapshotResult,
+): void {
+  if (options?.observeOnly !== true) return;
+  if (result.observation && !result.targetActivation) return;
+  throw new AppError('COMMAND_FAILED', 'Runner did not return an observe-only snapshot.', {
+    reason: 'observation-unavailable',
+  });
 }
 
 /**
