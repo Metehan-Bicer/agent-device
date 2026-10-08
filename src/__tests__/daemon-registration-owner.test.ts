@@ -91,6 +91,41 @@ test('publication truncates the log the daemon is already appending to', async (
   await owner.finish(report);
 });
 
+// Windows refuses ftruncate on a handle opened append-only. Reproducing that
+// host rule at the fs seam proves publication empties the log through a handle
+// that permits truncation instead of the one that creates the file (#3291).
+test('log truncation empties the file through a handle that permits ftruncate', async () => {
+  const { paths, owner } = await acquire();
+  const flagsByDescriptor = new Map<number, string>();
+  const realOpen = fs.openSync;
+  vi.spyOn(fs, 'openSync').mockImplementation(((
+    target: fs.PathLike,
+    flags: fs.OpenMode,
+    mode?: fs.Mode,
+  ) => {
+    const descriptor = realOpen(target, flags, mode);
+    flagsByDescriptor.set(descriptor, String(flags));
+    return descriptor;
+  }) as typeof fs.openSync);
+  const realTruncate = fs.ftruncateSync;
+  vi.spyOn(fs, 'ftruncateSync').mockImplementation(((descriptor: number, len?: number) => {
+    if (flagsByDescriptor.get(descriptor) === 'a') {
+      throw Object.assign(new Error('EPERM: operation not permitted, ftruncate'), {
+        code: 'EPERM',
+      });
+    }
+    realTruncate(descriptor, len);
+  }) as typeof fs.ftruncateSync);
+  try {
+    fs.writeFileSync(paths.logPath, 'previous run\n');
+    owner.publish(fields);
+    assert.equal(fs.readFileSync(paths.logPath, 'utf8'), '');
+  } finally {
+    vi.restoreAllMocks();
+  }
+  await owner.finish(report);
+});
+
 for (const [pid, startTime, reason] of [
   [999_999_999, 'successor-start', 'replaced'],
   [process.pid, 'recycled-start', 'replaced'],

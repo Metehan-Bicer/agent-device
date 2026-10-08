@@ -167,9 +167,16 @@ function writeShutdownReport(
   }
 }
 
-/** The daemon's stdout and stderr append to this inode, so it is emptied in place, never replaced. */
+/**
+ * The daemon's stdout and stderr append to this inode, so it is emptied in place, never
+ * replaced. The handle that empties it must permit truncation: on Windows a handle opened
+ * append-only (`'a'`) rejects `ftruncate` with EPERM, so the file is only created through
+ * `'a'` and then emptied through an `'r+'` handle, which both platforms permit (#3291).
+ */
 function truncateDaemonLog(logPath: string): void {
-  const descriptor = fs.openSync(logPath, 'a', 0o600);
+  const created = fs.openSync(logPath, 'a', 0o600);
+  fs.closeSync(created);
+  const descriptor = fs.openSync(logPath, 'r+', 0o600);
   try {
     fs.ftruncateSync(descriptor, 0);
   } finally {
