@@ -33,6 +33,10 @@ test('runtime press without readinessTimeoutMs takes the one-attempt path and re
     (error: unknown) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.details?.readiness, undefined);
+      // The shared not-found builder owes this route its dispatch disclosure:
+      // the acting row proves the request never reached the device. The read
+      // rows prove nothing and omit the field (see selector-read-policy).
+      assert.equal(error.details?.dispatched, 'no');
       return true;
     },
   );

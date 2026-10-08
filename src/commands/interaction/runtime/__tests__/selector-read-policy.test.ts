@@ -133,13 +133,23 @@ test('a read with no match at all still reports selector_not_found', async () =>
 
   assert.ok(error instanceof AppError);
   assert.equal(error.code, 'COMMAND_FAILED');
-  const details = error.details as { reason?: string; matches?: unknown; candidates?: unknown };
+  const details = error.details as {
+    reason?: string;
+    matches?: unknown;
+    candidates?: unknown;
+    dispatched?: unknown;
+  };
   assert.equal(details.reason, 'selector_not_found');
   // The absence outcome carries no match count and no candidate list: an
   // ambiguity-shaped field on a zero-match failure would let a consumer
   // reconstruct the flattened outcome the fix removed.
   assert.equal(details.matches, undefined);
   assert.equal(details.candidates, undefined);
+  // And no dispatch disclosure: the shared not-found builder threads
+  // `dispatched` as a parameter because the acting route proves 'no' and
+  // this route proves nothing about reaching the device (selector-readiness
+  // pins its side).
+  assert.equal(details.dispatched, undefined);
 });
 
 /**

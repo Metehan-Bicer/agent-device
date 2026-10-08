@@ -6,8 +6,10 @@ import type {
 import type { BackendSnapshotResult } from '../../../backend.ts';
 import {
   AppError,
+  discloseDispatch,
   ELEMENT_MATCH_CANDIDATE_LIMIT,
   type AppErrorDetails,
+  type DispatchDisclosure,
 } from '@agent-device/kernel/errors';
 import type {
   SnapshotNode,
@@ -19,6 +21,7 @@ import {
   formatSelectorFailure,
   selectorFailureHint,
   STALE_REF_HINT,
+  type SelectorResolution,
 } from '@agent-device/selectors';
 import type { SelectorPipelineOutcome } from '@agent-device/selectors/selector-pipeline';
 import { INTERACTION_ERROR_REASONS } from '@agent-device/selectors/interaction-error';
@@ -199,17 +202,37 @@ export function resolveRefNode(
  * builder this small earns no new static edge.
  */
 
-function selectorNotFoundFailure(
+/**
+ * The one `selector_not_found` refusal shape shared by the acting rows and the
+ * strict reads: COMMAND_FAILED, `formatSelectorFailure`'s message, the typed
+ * reason, and `selectorFailureHint` — built once so a hint or message edit
+ * cannot drift between routes. The two axes where those routes genuinely
+ * differ on the wire stay explicit parameters: `unique` (message shape) and
+ * `dispatched` (the acting route proves `'no'`; the read route proves nothing
+ * about device dispatch and omits the field rather than asserting one).
+ * Fixed contract fields (`reason`, `hint`) are written AFTER caller details so
+ * no caller spread order can clobber them.
+ */
+export function selectorNotFoundFailure(
   selectorExpression: string,
-  options: { command: string; unique: boolean } & AppErrorDetails,
+  options: {
+    /** The resolution diagnostics the message and hint read (empty: "did not match"). */
+    diagnostics?: SelectorResolution['diagnostics'];
+    unique?: boolean;
+    dispatched?: DispatchDisclosure;
+  } & AppErrorDetails,
 ): AppError {
-  const { command, unique, ...details } = options;
-  return new AppError('COMMAND_FAILED', formatSelectorFailure(selectorExpression, [], { unique }), {
-    ...details,
-    command,
-    reason: INTERACTION_ERROR_REASONS.selectorNotFound,
-    hint: selectorFailureHint([]),
-  });
+  const { diagnostics = [], unique = true, dispatched, ...details } = options;
+  const error = new AppError(
+    'COMMAND_FAILED',
+    formatSelectorFailure(selectorExpression, diagnostics, { unique }),
+    {
+      ...details,
+      reason: INTERACTION_ERROR_REASONS.selectorNotFound,
+      hint: selectorFailureHint(diagnostics),
+    },
+  );
+  return dispatched === undefined ? error : discloseDispatch(error, dispatched);
 }
 
 /**
