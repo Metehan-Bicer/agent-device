@@ -4,6 +4,10 @@ import { sleep } from './retry.ts';
 
 const PS_TIMEOUT_MS = 1_000;
 const HOST_PS_COMMAND = process.platform === 'win32' ? 'ps' : '/bin/ps';
+// PowerShell pays a fixed startup cost before the CIM query even runs, so every
+// Windows process-table read gets at least this budget instead of the `ps` one.
+const WINDOWS_PS_TIMEOUT_MS = 2_000;
+const WINDOWS_PROCESS_TOOL = 'powershell.exe';
 
 export type HostProcessInfo = {
   pid: number;
@@ -101,13 +105,17 @@ export function isProcessGroupAlive(pid: number): boolean {
 /**
  * Reads who owns a pid, off the event loop, with a budget the caller names. The three fields
  * are read concurrently so a loaded host pays one budget for the set rather than one per
- * field. Use this rather than the synchronous probes when the answer decides whether a
- * process is signaled: waiting is reversible and signaling the wrong process is not.
+ * field; on Windows one CIM query answers the whole set. Use this rather than the synchronous
+ * probes when the answer decides whether a process is signaled: waiting is reversible and
+ * signaling the wrong process is not.
  */
 export async function readProcessIdentityFacts(
   pid: number,
   timeoutMs = PS_TIMEOUT_MS,
 ): Promise<HostProcessIdentityFacts> {
+  if (isWindowsHostPlatform()) {
+    return await readWindowsProcessIdentityFacts(pid, timeoutMs);
+  }
   const [startTime, command, state] = await Promise.all([
     readProcessFieldAsync(pid, 'lstart=', timeoutMs),
     readProcessFieldAsync(pid, 'command=', timeoutMs),
@@ -137,6 +145,16 @@ export function readHostProcessIdentityObservations(
   const observations = new Map<number, HostProcessIdentityObservation>();
   const selected = uniquePositivePids(pids);
   if (selected.length === 0) return observations;
+  if (isWindowsHostPlatform()) {
+    for (const row of readWindowsProcessRows(selected, WINDOWS_PS_TIMEOUT_MS)) {
+      if (row.startTime === null) continue;
+      // A live row is never a zombie: a terminated Windows process leaves the
+      // CIM table, it does not linger in it unreaped, so no row state exposes
+      // one. Exit proof stays liveness-and-lifetime, as on every other platform.
+      observations.set(row.pid, { state: 'R', startTime: row.startTime });
+    }
+    return observations;
+  }
   try {
     const result = runCmdSync('ps', ['-p', selected.join(','), '-o', 'pid=,state=,lstart='], {
       allowFailure: true,
@@ -160,6 +178,7 @@ type HostProcessField = 'lstart=' | 'command=' | 'state=';
 
 function readProcessField(pid: number, field: HostProcessField): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (isWindowsHostPlatform()) return readWindowsProcessField(pid, field);
   try {
     const result = runCmdSync(HOST_PS_COMMAND, ['-p', String(pid), '-o', field], {
       allowFailure: true,
@@ -208,9 +227,137 @@ export function parseHostProcessList(stdout: string): HostProcessInfo[] {
   return processes;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Windows process-identity branch (#3291)                                     */
+/*                                                                             */
+/* Windows hosts have no `ps`. The same identity facts come from one           */
+/* CIM (`Win32_Process`) query through PowerShell: `CreationDate` is the       */
+/* birth time proven against PID reuse, `CommandLine` is the command the       */
+/* daemon-identity patterns match, and a terminated process leaves the table   */
+/* entirely instead of lingering as a zombie, so a live row is never `Z`.      */
+/* A failed or unanswered query is unknown evidence, exactly like a failed     */
+/* `ps`, and every caller stays fail-closed on it.                             */
+/* -------------------------------------------------------------------------- */
+
+type WindowsProcessRow = Readonly<{
+  pid: number;
+  ppid?: number;
+  startTime: string | null;
+  command: string | null;
+}>;
+
+function isWindowsHostPlatform(): boolean {
+  return hostPlatform() === 'win32';
+}
+
+// Rows are `pid|ppid|creation|command` with a culture-invariant UTC creation
+// stamp, so the value recorded in daemon.json compares equal on every read of
+// the same process lifetime. Newlines inside a command line are flattened so
+// one process is one row; the command may still contain `|`, which only ever
+// lands in the final capture group.
+const WINDOWS_PROCESS_ROW_BODY =
+  " | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.ProcessId, $_.ParentProcessId," +
+  " $_.CreationDate.ToUniversalTime().ToString('yyyyMMddHHmmssfffffff')," +
+  String.raw` ($_.CommandLine -replace '[\r\n]+', ' ') }`;
+
+function windowsProcessQueryArgs(pids: readonly number[]): string[] {
+  const source =
+    pids.length > 0
+      ? `Get-CimInstance -ClassName Win32_Process -Filter '${pids
+          .map((pid) => `ProcessId=${pid}`)
+          .join(' OR ')}'`
+      : 'Get-CimInstance -ClassName Win32_Process';
+  return ['-NoProfile', '-NonInteractive', '-Command', `${source}${WINDOWS_PROCESS_ROW_BODY}`];
+}
+
+function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {
+  const rows: WindowsProcessRow[] = [];
+  for (const line of stdout.replace(/^\uFEFF/, '').split('\n')) {
+    const match = /^(\d+)\|(\d+)\|([^|]*)\|(.*)\r?$/.exec(line);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1]!, 10);
+    const ppid = Number.parseInt(match[2]!, 10);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    rows.push({
+      pid,
+      ppid: Number.isInteger(ppid) && ppid > 0 ? ppid : undefined,
+      startTime: match[3]!.length > 0 ? match[3]! : null,
+      command: match[4]!.length > 0 ? match[4]! : null,
+    });
+  }
+  return rows;
+}
+
+function readWindowsProcessRows(pids: readonly number[], timeoutMs: number): WindowsProcessRow[] {
+  try {
+    const result = runCmdSync(WINDOWS_PROCESS_TOOL, windowsProcessQueryArgs(pids), {
+      allowFailure: true,
+      timeoutMs,
+    });
+    if (result.exitCode !== 0) return [];
+    return parseWindowsProcessRows(result.stdout);
+  } catch {
+    // A failed CIM snapshot is unknown evidence; callers remain fail-closed.
+    return [];
+  }
+}
+
+function readWindowsProcessField(pid: number, field: HostProcessField): string | null {
+  const row = readWindowsProcessRows([pid], WINDOWS_PS_TIMEOUT_MS).find(
+    (candidate) => candidate.pid === pid,
+  );
+  if (!row) return null;
+  if (field === 'lstart=') return row.startTime;
+  if (field === 'command=') return row.command;
+  return 'R';
+}
+
+function windowsBudgetMs(timeoutMs: number): number {
+  return Math.max(timeoutMs, WINDOWS_PS_TIMEOUT_MS);
+}
+
+async function readWindowsProcessIdentityFacts(
+  pid: number,
+  timeoutMs: number,
+): Promise<HostProcessIdentityFacts> {
+  if (!Number.isInteger(pid) || pid <= 0) return { startTime: null, command: null, zombie: null };
+  try {
+    const result = await runCmd(WINDOWS_PROCESS_TOOL, windowsProcessQueryArgs([pid]), {
+      allowFailure: true,
+      timeoutMs: windowsBudgetMs(timeoutMs),
+    });
+    if (result.exitCode !== 0) return { startTime: null, command: null, zombie: null };
+    const row = parseWindowsProcessRows(result.stdout).find((candidate) => candidate.pid === pid);
+    if (!row) return { startTime: null, command: null, zombie: null };
+    return { startTime: row.startTime, command: row.command, zombie: false };
+  } catch {
+    return { startTime: null, command: null, zombie: null };
+  }
+}
+
+async function listWindowsHostProcesses(
+  options: ListHostProcessesOptions,
+): Promise<HostProcessInfo[]> {
+  const result = await (options.runCommand ?? runCmd)(
+    WINDOWS_PROCESS_TOOL,
+    windowsProcessQueryArgs([]),
+    {
+      allowFailure: true,
+      timeoutMs: windowsBudgetMs(options.timeoutMs),
+    },
+  );
+  if (result.exitCode !== 0) return [];
+  return parseWindowsProcessRows(result.stdout).map((row) => ({
+    pid: row.pid,
+    ...(row.ppid !== undefined ? { ppid: row.ppid } : {}),
+    command: row.command ?? '',
+  }));
+}
+
 export async function listHostProcesses(
   options: ListHostProcessesOptions,
 ): Promise<HostProcessInfo[]> {
+  if (isWindowsHostPlatform()) return await listWindowsHostProcesses(options);
   const result = await (options.runCommand ?? runCmd)(
     options.runCommand ? 'ps' : HOST_PS_COMMAND,
     ['-ax', '-o', 'pid=,ppid=,command='],
