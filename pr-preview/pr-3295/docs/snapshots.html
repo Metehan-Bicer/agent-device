@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.de3049c034.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.e9248317f6.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -159,9 +159,10 @@ container itself is filtered out.</li>
 <li>When nothing matches, you get an empty snapshot, not the full tree.</li>
 </ul>
 <h2 class="rp-toc-include" id="truncated-captures"><a href="#truncated-captures" class="rp-header-anchor rp-link" aria-hidden="true">#</a>Truncated captures</h2>
-<p><code>truncated: true</code> means the capture hit one of its node limits: 5000 nodes for the Android snapshot
-helper and the iOS Simulator accessibility bridge, and their own bounds for the XCTest runner and the
-web provider. On Android the limit applies before any <code>-s</code> scope.</p>
+<p><code>truncated: true</code> means the Android snapshot helper or the iOS Simulator accessibility bridge hit its
+5000-node limit, or the web provider hit its own bound. On Android the limit applies before any <code>-s</code>
+scope. The Apple runner does not return a partial tree: above its limit (50,000 nodes, or 5,000 with
+<code>--raw</code>) the snapshot fails with a hint to scope it or take a screenshot instead.</p>
 <p>Every backend walks the tree in document order, so what gets cut is what comes last: footers, tab
 bars, items after a long list, even when they are on screen. The snapshot carries a warning when this
 happens. Navigate or scroll so fewer elements render and snapshot again, and use <code>screenshot</code> as the

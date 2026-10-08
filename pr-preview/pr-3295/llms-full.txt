@@ -1782,8 +1782,10 @@ agent-device prepare ios-runner --platform ios --timeout 240000
 - If health checking exposes a bad restored runner artifact, agent-device marks that artifact bad and rebuilds once.
 - If a fresh runner launch gets stuck before accepting connections, agent-device invalidates that runner session and launches it once more without forcing a rebuild.
 - CI may cache `~/.agent-device/apple-runner/derived` when the cache key includes the exact agent-device package contents and selected Xcode version.
+- After a successful build, agent-device removes the build scratch from the new cache key (intermediates, precompiled and module caches, logs) and keeps `Build/Products` and the metadata file, which is all reuse and launch read; one iOS simulator key measured 165.7 MB before the trim and 5.9 MB after. A key that fails certification is rebuilt from scratch either way, and a runner source or Xcode change mints a new key, so the scratch is never used again. Only the key this build gets with no path override is trimmed, compared by resolved real path; a `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` pointing anywhere else, including inside the managed runner cache, is never trimmed, because a fixed path rebuilds into the same tree incrementally.
+- agent-device versions from before the Apple runner rename kept their cache in `~/.agent-device/ios-runner`. Current versions never read it, and it is not removed automatically because an older version installed on the same machine may still use it. Delete it with `rm -rf ~/.agent-device/ios-runner` once no old version runs.
 - Runner reuse is authorized only by the cache metadata's content manifest: a restored tree whose files no longer match the recorded digests, modes, or symlink targets is discarded and rebuilt. A cache key must stay exact — the runtime never falls back to a broader cache.
-- Every runner source or Xcode change creates a new cache key under `~/.agent-device/apple-runner/derived/<folder>/`, where the folder names the platform and device kind (`ios-simulator`, `ios-device`, `tvos-simulator`, `tvos-device`, `macos`, `visionos-simulator`, `visionos-device`). After a build, Agent Device deletes, on a best-effort basis and without delaying the start, keys beside the new one in the same folder that are neither among the 3 most recently used (the new key included) nor used in the last day, and never one a runner lease not proven dead points at or a build is holding. A key that cannot be deleted is left in place and reported as a `runner_xctestrun_cache_eviction_failed` warning diagnostic. `AGENT_DEVICE_IOS_RUNNER_CACHE_KEEP=<n>` changes that count and `0` keeps every key. A set `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` is never swept.
+- Every runner source or Xcode change creates a new cache key under `~/.agent-device/apple-runner/derived/<folder>/`, where the folder names the platform and device kind (`ios-simulator`, `ios-device`, `tvos-simulator`, `tvos-device`, `macos`, `visionos-simulator`, `visionos-device`). After a build, agent-device deletes, on a best-effort basis and without delaying the start, keys beside the new one in the same folder that are neither among the 3 most recently used (the new key included) nor used in the last day, and never one a runner lease not proven dead points at or a build is holding. A key that cannot be deleted is left in place and reported as a `runner_xctestrun_cache_eviction_failed` warning diagnostic. `AGENT_DEVICE_IOS_RUNNER_CACHE_KEEP=<n>` changes that count and `0` keeps every key. A set `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` is never swept.
 - Certification is fail-closed: when a product tree cannot be certified at all — a product escaping the derived-data root, an unreadable subtree, a file over 128 MB, or a non-regular entry such as a socket — the build fails with `runner_cache_uncertifiable` naming the path instead of launching uncertified bytes. Point `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` at a plain directory the current user owns; replacing the tree (the error's hint says how) clears a refusal.
 - Runner build/start output is written to the session's `runner.log`. The top-level `daemon.log` is reserved for daemon lifecycle/startup issues.
 
@@ -2982,7 +2984,7 @@ When a command fails, use `--json` to inspect `error.details.stderr` when it is 
 
 When a command fails against a remote daemon, the `Diagnostics Log:` path is always on your machine:
 agent-device downloads the failing request's record over the same base URL and token into
-`<state-dir>/remote-diagnostics/<session>/<request-id>.ndjson`, so a CI job can keep it as a build
+`<state-dir>/remote-diagnostics/<session>/requests/<request-id>.ndjson`, so a CI job can keep it as a build
 artifact. If the download fails, the line reads `unavailable` with the remote daemon, the
 request id, and the reason — never a path on the daemon host.
 
@@ -3327,7 +3329,7 @@ Run `agent-device help physical-device` for the same setup guidance from the CLI
 - Xcode is installed with `xcrun devicectl` and `xcrun xctrace` available.
 - The device is paired, trusted, connected, unlocked when needed, and listed by `xcrun devicectl list devices`.
 - Developer Mode is on in the device's Settings.
-- The Apple runner must be signed before commands can run on the device. Start with Automatic Signing in Xcode and set only these environment variables:
+- The Apple runner must be signed before commands can run on the device. Start with Automatic Signing in Xcode and these environment variables; add the others below only when needed:
   - `AGENT_DEVICE_IOS_TEAM_ID`
   - `AGENT_DEVICE_IOS_BUNDLE_ID` (optional base bundle ID for the runner app; its tests use `<id>.uitests`)
 - To find team IDs and Apple Development signing certificates, run `security find-identity -v -p codesigning`.
@@ -3501,7 +3503,7 @@ agent-device close
 agent-device disconnect
 ```
 
-On Android, agent-device connects to Limrun over an ADB tunnel. Helper-backed snapshots, installs, and port reverse are available, including the usual reverse setup for a local Metro server.
+On Android, agent-device connects to Limrun over an ADB tunnel. Snapshots use the Android snapshot helper, installs upload the app through Limrun asset storage, and port reverse runs over ADB, including the usual reverse setup for a local Metro server.
 
 On iOS, agent-device supports app lifecycle commands, snapshots, screenshots, taps, text input, scrolling, the home button, clipboard read and write, and app installation. `open --launch-args` relaunches the app with those arguments through simctl. iOS cannot reverse a remote device port to a local host port, so for Metro or React DevTools use a publicly reachable HTTPS endpoint or bridge URL instead of a local-only address.
 
@@ -4309,7 +4311,7 @@ agent-device replay ~/.agent-device/sessions/e2e-2026-02-09T12-00-00-000Z.ad --s
 ```
 
 - Replay reads `.ad` scripts.
-- The CLI reads script paths on your machine and sends the script, with any Maestro `runFlow` includes, to the daemon. The same `replay` or `test` command works against a local or a remote daemon without copying files. A script that doesn't exist on your machine fails at once, naming the path you typed.
+- The CLI reads script paths on your machine and sends the script, with the Maestro `runFlow` includes it can resolve and read, to the daemon. An include it cannot read is left out, and the run fails if it reaches that include. The same `replay` or `test` command works against a local or a remote daemon without copying files. A script that doesn't exist on your machine fails at once, naming the path you typed.
 - A script that does not end in `close` leaves its session open. For a script that does end in
   `close`, pass `--keep-session` to skip only that final action and keep working in the same
   session:
@@ -4779,8 +4781,9 @@ Actions:
 matches before you act. `find` has no `longpress` or `swipe` action; run `list`, then run the gesture
 on the ref you picked, for example `longpress @e14`.
 
-When more than one element matches, `find` rejects the query and lists the candidates. This applies
-to text queries and selector expressions alike. Add `--first` or `--last` to pick a match by
+When more than one element matches, the mutating actions (`click`, `focus`, `fill`, `type`) reject
+the query and list the candidates. This applies to text queries and selector expressions alike.
+Read-only actions (`exists`, `wait`, `get`) use the first match, and `list` returns every match. Add `--first` or `--last` to pick a match by
 position instead.
 
 ```bash
@@ -5141,9 +5144,10 @@ agent-device snapshot -s @e12
 
 ## Truncated captures
 
-`truncated: true` means the capture hit one of its node limits: 5000 nodes for the Android snapshot
-helper and the iOS Simulator accessibility bridge, and their own bounds for the XCTest runner and the
-web provider. On Android the limit applies before any `-s` scope.
+`truncated: true` means the Android snapshot helper or the iOS Simulator accessibility bridge hit its
+5000-node limit, or the web provider hit its own bound. On Android the limit applies before any `-s`
+scope. The Apple runner does not return a partial tree: above its limit (50,000 nodes, or 5,000 with
+`--raw`) the snapshot fails with a hint to scope it or take a screenshot instead.
 
 Every backend walks the tree in document order, so what gets cut is what comes last: footers, tab
 bars, items after a long list, even when they are on screen. The snapshot carries a warning when this

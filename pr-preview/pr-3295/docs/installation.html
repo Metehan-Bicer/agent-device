@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.de3049c034.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.e9248317f6.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -83,7 +83,7 @@ dev servers are ready before you hand the CLI to an agent.</p>
 <li>Xcode is installed with <code>xcrun devicectl</code> and <code>xcrun xctrace</code> available.</li>
 <li>The device is paired, trusted, connected, unlocked when needed, and listed by <code>xcrun devicectl list devices</code>.</li>
 <li>Developer Mode is on in the device&#x27;s Settings.</li>
-<li>The Apple runner must be signed before commands can run on the device. Start with Automatic Signing in Xcode and set only these environment variables:
+<li>The Apple runner must be signed before commands can run on the device. Start with Automatic Signing in Xcode and these environment variables; add the others below only when needed:
 <ul>
 <li><code>AGENT_DEVICE_IOS_TEAM_ID</code></li>
 <li><code>AGENT_DEVICE_IOS_BUNDLE_ID</code> (optional base bundle ID for the runner app; its tests use <code>&lt;id&gt;.uitests</code>)</li>

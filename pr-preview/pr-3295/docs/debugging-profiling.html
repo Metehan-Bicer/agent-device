@@ -9,7 +9,7 @@
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-react.e84adf13b9.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/lib-router.270f17bfa6.js"></script>
 <script defer src="/agent-device/pr-preview/pr-3295/static/js/476.52ed165336.js"></script>
-<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.de3049c034.js"></script>
+<script defer src="/agent-device/pr-preview/pr-3295/static/js/index.e9248317f6.js"></script>
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="generator" content="Rspress v2.0.12">
 <meta property="og:url" content="https://oss.callstack.com/agent-device">
@@ -82,7 +82,7 @@
 <p>When a command fails, use <code>--json</code> to inspect <code>error.details.stderr</code> when it is present. Diagnostic stderr is secret-redacted and retains up to 8,192 characters; longer output keeps its beginning and end with a truncation marker between them. Other diagnostic strings remain limited to 400 characters. Compact retry summaries may retain less output.</p>
 <p>When a command fails against a remote daemon, the <code>Diagnostics Log:</code> path is always on your machine:
 agent-device downloads the failing request&#x27;s record over the same base URL and token into
-<code>&lt;state-dir&gt;/remote-diagnostics/&lt;session&gt;/&lt;request-id&gt;.ndjson</code>, so a CI job can keep it as a build
+<code>&lt;state-dir&gt;/remote-diagnostics/&lt;session&gt;/requests/&lt;request-id&gt;.ndjson</code>, so a CI job can keep it as a build
 artifact. If the download fails, the line reads <code>unavailable</code> with the remote daemon, the
 request id, and the reason — never a path on the daemon host.</p>
 <p>On iOS simulators, <code>logs</code> scope by bundle id and the resolved app executable. For launch-time stdout/stderr, capture the direct app launch console instead of starting raw <code>simctl</code> streams:</p>
