@@ -428,23 +428,10 @@ extension RunnerTests {
       return Response(ok: true, data: DataPayload(text: text))
     case .screenshot:
 #if os(macOS)
-      // Window-level app captures raise the app; a full-screen capture of a running app and an app
-      // already in the foreground do not (#3254).
-      //
-      // The raise is load-bearing for the window-level pixels, so it stays there. Measured on a macOS
-      // host with a known window frame and a second window laid over it: for a `.runningBackground`
-      // app `screenshotRoot(app:).screenshot()` returns that window's own rect at the right scale but
-      // not its own content — the occluding app's windows are in the image — and the same call after
-      // `activate()` returns the app's content. A window-level capture on this backend is a region
-      // grab, so answering one from the background would silently report another app's screen as this
-      // app's window. A `--fullscreen` capture is a whole-display grab that `XCUIScreen.main` answers
-      // whichever app owns the foreground, so nothing about its pixels needs a running app raised,
-      // and a read that asked for none takes the user's frontmost app away. A stopped app keeps being
-      // started for either shape: there the activation is the launch it has always performed, which
-      // this change leaves untouched. The wait belongs to the raise: only a raised app has an
-      // animation to settle. The macOS helper serves background windows by a different mechanism,
-      // `SCContentFilter(desktopIndependentWindow:)`, which is the native backend's path and is not
-      // reachable here.
+      // An app-targeted window-level capture is a screen-region grab: from the background the
+      // occluding app's pixels land in the image, so the raise is what makes the pixels correct
+      // (measured; record in #3338). `--fullscreen` reads the whole display and needs no raise.
+      // The wait belongs to the raise: only a raised app has an activation animation to settle.
       let screenshotBundleId = command.appBundleId?.trimmedNonEmpty
       if let bundleId = screenshotBundleId {
         let targetApp = XCUIApplication(bundleIdentifier: bundleId)
