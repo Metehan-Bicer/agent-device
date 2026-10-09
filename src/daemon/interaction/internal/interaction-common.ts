@@ -7,7 +7,11 @@ import {
   type RecordedTargetCapture,
 } from '@agent-device/selectors/target-evidence';
 import type { MultiTargetAnnotationV1 } from '@agent-device/contracts/replay';
-import { inferFillText, recordedInputPlaceholder } from '@agent-device/ad-script';
+import {
+  inferFillText,
+  isSensitiveFillText,
+  recordedInputPlaceholder,
+} from '@agent-device/ad-script';
 import { parameterizeRecordedFillPayload } from '@agent-device/selectors/parameterized-recorded-fill';
 import type { InteractionFinalizationOperations } from './types.ts';
 
@@ -90,6 +94,9 @@ function computeMultiTargetEvidence(recordedTargets: {
   return source && destination ? { source, destination } : undefined;
 }
 
+/** What sensitive fill text reads as when no `--record-as` placeholder names it. */
+const REDACTED_FILL_TEXT = '[REDACTED]';
+
 function parameterizeFillPayloads(params: {
   command: string;
   positionals: string[];
@@ -97,7 +104,7 @@ function parameterizeFillPayloads(params: {
   result: Record<string, unknown>;
   responseData: Record<string, unknown>;
 }): readonly [result: Record<string, unknown>, responseData: Record<string, unknown>] {
-  if (params.command !== 'fill' || typeof params.flags?.recordAs !== 'string') {
+  if (params.command !== 'fill' || !isSensitiveFillText(params.flags)) {
     return [params.result, params.responseData];
   }
   const literal = inferFillText({
@@ -107,7 +114,10 @@ function parameterizeFillPayloads(params: {
     flags: params.flags,
     result: params.result,
   });
-  const placeholder = recordedInputPlaceholder(params.flags.recordAs);
+  const placeholder =
+    typeof params.flags?.recordAs === 'string'
+      ? recordedInputPlaceholder(params.flags.recordAs)
+      : REDACTED_FILL_TEXT;
   return [
     parameterizeRecordedFillPayload(params.result, literal, placeholder),
     parameterizeRecordedFillPayload(params.responseData, literal, placeholder),

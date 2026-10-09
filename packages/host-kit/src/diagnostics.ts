@@ -5,6 +5,7 @@ export {
   emitDiagnostic,
   flushDiagnosticsToSessionFile,
   getDiagnosticsMeta,
+  redactRegisteredSensitiveValues,
   registerDiagnosticSensitiveValue,
   type ResourceDiagnostic,
   updateDiagnosticsScope,

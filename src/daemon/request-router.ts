@@ -37,6 +37,7 @@ import {
   emitDiagnostic,
   flushDiagnosticsToSessionFile,
   getDiagnosticsMeta,
+  redactRegisteredSensitiveValues,
   registerDiagnosticSensitiveValue,
   withDiagnosticsScope,
 } from '@agent-device/host-kit/diagnostics';
@@ -55,7 +56,7 @@ import {
 import { unsupportedSaveScriptFlagResponse } from './request-save-script-policy.ts';
 import { canRunReplayScopedAction } from './daemon-command-registry.ts';
 import { isWebSession } from './web-session-names.ts';
-import { inferFillText } from '@agent-device/ad-script';
+import { inferFillText, isSensitiveFillText } from '@agent-device/ad-script';
 import { createPlatformRequestScope } from './platform-request-scope.ts';
 import { createOwnerScopedDeviceClaimReconciler } from './device/device-claim-owner-recovery.ts';
 import { isConfinedToAppLease, scopeRequestSession } from './request-admission.ts';
@@ -207,7 +208,7 @@ export function createRequestHandler(deps: RequestRouterDeps): DaemonInvokeFn {
             repairExpiredIfTombstoned(req, response.error, sessionStore),
             sessionStore,
           );
-          return { ok: false, error: enrichDaemonError(error) };
+          return { ok: false, error: redactRegisteredSensitiveValues(enrichDaemonError(error)) };
         }
         // Phase 4 (agent-cost) grafts on the success path. Runs inside the
         // diagnostics scope so cost can read this request's runner-round-trip tally.
@@ -498,8 +499,7 @@ function customActionFlagsResponse(req: DaemonRequest): DaemonResponse | undefin
 }
 
 function registerParameterizedFillDiagnosticValue(req: DaemonRequest): void {
-  if (req.command !== 'fill') return;
-  if (typeof req.flags?.recordAs !== 'string' && req.flags?.textStdin !== true) return;
+  if (req.command !== 'fill' || !isSensitiveFillText(req.flags)) return;
   registerDiagnosticSensitiveValue(
     inferFillText({
       ts: 0,

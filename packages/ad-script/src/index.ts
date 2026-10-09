@@ -66,6 +66,7 @@ export {
 
 export {
   inferFillText,
+  isSensitiveFillText,
   readRecordedInputVariableName,
   recordedInputPlaceholder,
   validateRecordedInputVariableName,
