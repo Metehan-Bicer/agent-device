@@ -221,18 +221,35 @@ function processFieldValue(result: ExecResult): string | null {
   return value.length > 0 ? value : null;
 }
 
-export function parseHostProcessList(stdout: string): HostProcessInfo[] {
-  const processes: HostProcessInfo[] = [];
-  for (const line of stdout.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+/**
+ * Walks process-table stdout line by line, keeping rows whose first two
+ * capture groups are a positive pid and an optional positive ppid. Every
+ * process-table format (POSIX `ps`, Windows CIM) feeds its own row pattern
+ * and row builder through this single walk.
+ */
+function parseProcessTableRows<T>(
+  stdout: string,
+  rowPattern: RegExp,
+  build: (match: RegExpExecArray, pid: number, ppid: number | undefined) => T,
+): T[] {
+  const rows: T[] = [];
+  for (const line of stdout.replace(/^\uFEFF/, '').split('\n')) {
+    const match = rowPattern.exec(line);
     if (!match) continue;
     const pid = Number.parseInt(match[1]!, 10);
-    const ppid = Number.parseInt(match[2]!, 10);
-    const command = match[3]!;
     if (!Number.isInteger(pid) || pid <= 0) continue;
-    processes.push({ pid, ppid: Number.isInteger(ppid) && ppid > 0 ? ppid : undefined, command });
+    const ppid = Number.parseInt(match[2]!, 10);
+    rows.push(build(match, pid, Number.isInteger(ppid) && ppid > 0 ? ppid : undefined));
   }
-  return processes;
+  return rows;
+}
+
+export function parseHostProcessList(stdout: string): HostProcessInfo[] {
+  return parseProcessTableRows(stdout, /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/, (match, pid, ppid) => ({
+    pid,
+    ppid,
+    command: match[3]!,
+  }));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -292,21 +309,16 @@ function windowsProcessQueryArgs(pids: readonly number[]): string[] {
 }
 
 function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {
-  const rows: WindowsProcessRow[] = [];
-  for (const line of stdout.replace(/^\uFEFF/, '').split('\n')) {
-    const match = /^(\d+)\|(\d+)\|([^|]*)\|(.*)\r?$/.exec(line);
-    if (!match) continue;
-    const pid = Number.parseInt(match[1]!, 10);
-    const ppid = Number.parseInt(match[2]!, 10);
-    if (!Number.isInteger(pid) || pid <= 0) continue;
-    rows.push({
+  return parseProcessTableRows(
+    stdout,
+    /^(\d+)\|(\d+)\|([^|]*)\|(.*)\r?$/,
+    (match, pid, ppid): WindowsProcessRow => ({
       pid,
-      ppid: Number.isInteger(ppid) && ppid > 0 ? ppid : undefined,
+      ...(ppid !== undefined ? { ppid } : {}),
       startTime: match[3]!.length > 0 ? match[3]! : null,
       command: match[4]!.length > 0 ? match[4]! : null,
-    });
-  }
-  return rows;
+    }),
+  );
 }
 
 function readWindowsProcessRows(pids: readonly number[], timeoutMs: number): WindowsProcessRow[] {

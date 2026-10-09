@@ -111,19 +111,38 @@ function classifyLiveOwnerFromObservation(
   observation?: HostProcessIdentityObservation | null,
 ): OwnerLiveness {
   const { owner, stateDir } = params;
-  if (observation !== undefined ? observation?.state.startsWith('Z') : isProcessZombie(owner.pid)) {
-    return 'owner-process-dead';
-  }
-  if (owner.startTime) {
-    const currentStartTime =
-      observation !== undefined
-        ? (observation?.startTime ?? null)
-        : readProcessStartTime(owner.pid);
-    if (currentStartTime !== null && currentStartTime !== owner.startTime) {
-      return 'owner-process-reused';
-    }
-  }
+  if (hostSaysZombie(owner, observation)) return 'owner-process-dead';
+  if (owner.startTime && provesPidReused(owner, observation)) return 'owner-process-reused';
   return stateDir ? classifyOwnerStateDirectory(stateDir) : 'live';
+}
+
+/**
+ * Whether the host calls this owner a zombie. An `undefined` observation means
+ * no snapshot was taken and the field probe answers; a `null` observation is a
+ * completed snapshot that did not list the pid, which is unknown evidence and
+ * never a zombie claim.
+ */
+function hostSaysZombie(
+  owner: Pick<OwnerIdentity, 'pid'>,
+  observation: HostProcessIdentityObservation | null | undefined,
+): boolean {
+  if (observation === undefined) return isProcessZombie(owner.pid);
+  return observation?.state.startsWith('Z') ?? false;
+}
+
+/**
+ * Whether the recorded birth time proves the pid changed hands. Only a
+ * readable current start time that differs from the record proves reuse; an
+ * `undefined` observation falls back to the field probe, and a host that did
+ * not answer is unknown evidence, never proof.
+ */
+function provesPidReused(
+  owner: Pick<OwnerIdentity, 'pid' | 'startTime'>,
+  observation: HostProcessIdentityObservation | null | undefined,
+): boolean {
+  const currentStartTime =
+    observation === undefined ? readProcessStartTime(owner.pid) : (observation?.startTime ?? null);
+  return currentStartTime !== null && currentStartTime !== owner.startTime;
 }
 
 function classifyOwnerStateDirectory(stateDir: string): OwnerLiveness {
