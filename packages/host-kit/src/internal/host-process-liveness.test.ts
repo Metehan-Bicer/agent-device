@@ -70,6 +70,7 @@ test('reads many process identities from one ps snapshot', () => {
     startTime: 'Mon Aug 10 20:01:00 2026',
   });
   assert.equal(mockRunCmdSync.mock.calls.length, 1);
+  assert.equal(mockRunCmdSync.mock.calls[0]?.[0], '/bin/ps');
   assert.deepEqual(mockRunCmdSync.mock.calls[0]?.[1], [
     '-p',
     '4242,4343',
@@ -129,5 +130,6 @@ test('the ownership read answers the zombie question from the state field', asyn
     command: 'y',
     zombie: true,
   });
+  assert.equal(mockRunCmd.mock.calls[0]?.[0], '/bin/ps');
   assert.equal(mockRunCmd.mock.calls[0]?.[2]?.timeoutMs, 1_000);
 });

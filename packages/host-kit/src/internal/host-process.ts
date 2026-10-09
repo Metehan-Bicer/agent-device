@@ -3,7 +3,10 @@ import { runCmd, runCmdSync } from './exec.ts';
 import { sleep } from './retry.ts';
 
 const PS_TIMEOUT_MS = 1_000;
-const HOST_PS_COMMAND = process.platform === 'win32' ? 'ps' : '/bin/ps';
+// The one binary behind every POSIX probe: pinning it keeps a hostile PATH from
+// substituting another `ps`. Windows hosts branch to the CIM query at every call
+// site before this constant is consulted, so it names no Windows tool.
+const HOST_PS_COMMAND = '/bin/ps';
 // PowerShell pays a fixed startup cost before the CIM query even runs, so every
 // Windows process-table read gets at least this budget instead of the `ps` one.
 const WINDOWS_PS_TIMEOUT_MS = 2_000;
@@ -157,10 +160,14 @@ export function readHostProcessIdentityObservations(
     return observations;
   }
   try {
-    const result = runCmdSync('ps', ['-p', selected.join(','), '-o', 'pid=,state=,lstart='], {
-      allowFailure: true,
-      timeoutMs: PS_TIMEOUT_MS,
-    });
+    const result = runCmdSync(
+      HOST_PS_COMMAND,
+      ['-p', selected.join(','), '-o', 'pid=,state=,lstart='],
+      {
+        allowFailure: true,
+        timeoutMs: PS_TIMEOUT_MS,
+      },
+    );
     if (result.exitCode !== 0) return observations;
     for (const line of result.stdout.split('\n')) {
       const match = /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
