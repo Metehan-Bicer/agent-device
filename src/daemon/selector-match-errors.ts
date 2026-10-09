@@ -8,8 +8,9 @@ import { errorResponse } from '@agent-device/kernel/contracts';
 // right @ref immediately, without a follow-up snapshot round trip. Candidate
 // lines reuse the exact snapshot-line renderer (`formatSnapshotLine`) so a
 // candidate reads identically to its row in `snapshot -i` output: ref, role,
-// label/identifier. The cap is ELEMENT_MATCH_CANDIDATE_LIMIT, owned beside the
-// detail type the surfaces read — `matches` (the true total) is what a
+// label/identifier. The cap lives in the one builder that fills the disclosure
+// (`elementMatchCandidateDetails`), beside the renderer — `matches` (the true
+// total) is what a
 // "+N more" marker is computed from at render time by the surface owners.
 // Exported as the single AMBIGUOUS_MATCH producer so the help-benchmark
 // sample parity test renders the exact error this handler returns; a message

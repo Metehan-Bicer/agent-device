@@ -1,10 +1,7 @@
 import { isSystemScrollIndicatorLabel } from '@agent-device/kernel/scroll-indicator';
 import { formatRole } from '@agent-device/kernel/snapshot';
 import type { SnapshotNode } from '@agent-device/kernel/snapshot';
-import {
-  ELEMENT_MATCH_CANDIDATE_LIMIT,
-  type ElementMatchCandidateDetails,
-} from '@agent-device/kernel/errors';
+import type { ElementMatchCandidateDetails } from '@agent-device/kernel/errors';
 import {
   buildTextPreview,
   describeTextSurface,
@@ -87,8 +84,13 @@ export function formatSnapshotLine(
  * in `snapshot -i` (#1597). Owned beside {@link formatSnapshotLine} because the
  * cap, the renderer, and this pairing are one contract — the acting refusal,
  * the find refusal, and the strict-read door all build their disclosure here
- * instead of restating the slice-and-render.
+ * instead of restating the slice-and-render. The cap is module-local by
+ * design: this entry surface stays implementation-lazy (ADR 0019), and the
+ * surfaces' "+N more" marker is computed from `matches - candidates.length`,
+ * never from the constant, so one declaration here is the whole single source.
  */
+const ELEMENT_MATCH_CANDIDATE_LIMIT = 5;
+
 export function elementMatchCandidateDetails(
   matchedNodes: readonly SnapshotNode[],
 ): ElementMatchCandidateDetails {

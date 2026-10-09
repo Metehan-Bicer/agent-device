@@ -162,13 +162,12 @@ export type NormalizedError = {
 };
 
 /**
- * How many candidate lines an `AMBIGUOUS_MATCH` producer puts on the wire.
- * Owned beside the detail type every surface reads (`readErrorCandidateViews`
- * computes the "+N more" marker from `matches - candidates.length`), so the
- * producers' caps cannot drift from each other or from the renderers.
+ * The `matches`/`candidates` pair an `AMBIGUOUS_MATCH` producer puts on the
+ * wire. The cap on `candidates` is owned by the one builder that fills this
+ * shape (`elementMatchCandidateDetails` in capture-kit's line renderer), and
+ * `readErrorCandidateViews` computes the "+N more" marker from
+ * `matches - candidates.length`, so no consumer needs the constant itself.
  */
-export const ELEMENT_MATCH_CANDIDATE_LIMIT = 5;
-
 export type ElementMatchCandidateDetails = {
   candidates: string[];
   matches: number;
