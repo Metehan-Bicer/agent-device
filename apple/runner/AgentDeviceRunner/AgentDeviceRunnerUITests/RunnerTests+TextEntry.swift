@@ -243,7 +243,7 @@ extension RunnerTests {
     }
   }
 
-  func clearTextInput(_ element: XCUIElement) {
+  func clearTextInput(app: XCUIApplication, _ element: XCUIElement) {
     // Skip the clear (delete burst + moveCaretToEnd edge-tap) ONLY when we can confirm the
     // field is empty. Why skip: the edge-tap computes a point from the element frame, which can
     // be stale after the field repositions on focus (e.g. the Settings search bar jumps
@@ -257,7 +257,7 @@ extension RunnerTests {
       return
     }
 #if !os(tvOS)
-    moveCaretToEnd(element: element)
+    moveCaretToEnd(app: app, element: element)
 #endif
     let count = estimatedDeleteCount(for: element)
     let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: count)
@@ -357,6 +357,21 @@ extension RunnerTests {
     return app.descendants(matching: identity.elementType).matching(identifier: identity.identifier).element
   }
 
+  /// Reads the frame a post-focus point is computed from, through the channel that records nothing.
+  /// A tap holds a handle bound to the query that resolved its element, and asking that handle for
+  /// `element.frame` re-runs the query: an element that stopped answering it once it took focus — a
+  /// Flutter password field whose two accessibility channels disagree when focused (#3060) — makes
+  /// XCTest record "No matches found for …", which ends the runner session for work the dispatch had
+  /// already landed. `snapshot()` answers the same query through the throwing channel and records
+  /// nothing, which is already how `probeTextEntryInput` and `withElement` reach an element. Nil means
+  /// no trustworthy frame: callers must degrade to a route that needs no point rather than dispatch
+  /// one computed from where the element used to be.
+  func textEntrySnapshotFrame(_ element: XCUIElement) -> CGRect? {
+    // Skipped when the input is already gone, so a removed field does not pay the snapshot's
+    // ~2-second wait for a match before its point degrades (the same guard `withElement` makes).
+    safely("TEXT_ENTRY_SNAPSHOT_FRAME", { element.exists ? try? element.snapshot() : nil })?.frame
+  }
+
   /// Snapshots one candidate: its identity, a proven no-match, or a failure that proves nothing.
   func probeTextEntryInput(_ element: XCUIElement) -> TextEntryInputProbe {
     var probe = TextEntryInputProbe.unavailable
@@ -395,20 +410,29 @@ extension RunnerTests {
     return nil
   }
 
-  private func moveCaretToEnd(element: XCUIElement) {
+  private func moveCaretToEnd(app: XCUIApplication, element: XCUIElement) {
 #if os(tvOS)
     return
 #else
-    let frame = element.frame
-    guard !frame.isEmpty else {
-      element.tap()
+    // Both the point AND its dispatch must stay off the handle: this runs AFTER the command's own
+    // focus tap, and an input that stopped answering its resolving query on focus (#3060) makes
+    // every post-focus handle touch a recorder — `element.frame` records directly, and an
+    // element-anchored `coordinate(...).tap()` re-runs that same query to resolve its anchor when
+    // the action executes. A fresh `snapshot()` proves the handle answered moments earlier, not
+    // that it still answers at tap-dispatch time. So the point comes from the snapshot frame and
+    // goes out app-relative through `tapAt`, which resolves no element at all — the shape
+    // `waitForTextEntryReadinessAfterTap` settled on in #3237. With no trustworthy frame, or a
+    // zero-size one (how a departed handle reads), there is no point to dispatch — an edge-tap
+    // from a frame the field moved after records a failure or navigates away, the shape
+    // `clearTextInput`'s comment refuses — so degrade to the caller's point-free delete burst.
+    guard let frame = textEntrySnapshotFrame(element), !frame.isEmpty else {
       return
     }
-    let origin = element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
-    let target = origin.withOffset(
-      CGVector(dx: max(2, frame.width - 4), dy: max(2, frame.height / 2))
+    _ = tapAt(
+      app: app,
+      x: frame.minX + max(2, frame.width - 4),
+      y: frame.minY + max(2, frame.height / 2)
     )
-    target.tap()
 #endif
   }
 
