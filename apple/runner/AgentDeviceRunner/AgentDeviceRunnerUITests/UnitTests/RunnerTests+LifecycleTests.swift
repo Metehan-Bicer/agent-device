@@ -117,6 +117,67 @@ extension RunnerTests {
 }
 #endif
 
+#if AGENT_DEVICE_RUNNER_UNIT_TESTS && os(macOS)
+extension RunnerTests {
+  /// Pins every state the macOS screenshot raise condition reads (#3254), together with the read
+  /// arm's answer for the same state, so one table owns the pair. Both predicates run their real
+  /// bodies: a drifted condition on either side lands as a red row rather than a silent behavior
+  /// change. The rows encode the two platform facts the split rests on: the macOS SDK declares no
+  /// suspended state (see `RunnerTests+ApplicationStateRawValueTests`), so these two predicates
+  /// cannot disagree on it here, and every state that is not `.runningBackground` keeps its
+  /// activating route for reads — which for a capture is also where the raise lives. The one
+  /// deliberate divergence is background itself: a read is served in place because the tree answers
+  /// from anywhere, while a window-level capture raises because its pixels are a region grab that
+  /// the occluding app spoils (#3254's measurement). Full-screen captures raise only a stopped app,
+  /// where the activation is the launch it has always performed.
+  func testMacBackgroundServingAndCaptureRaiseConditionsArePinnedPerState() throws {
+    let read = try runnerCommandFixture(#"{"command":"snapshot","commandId":"table","appBundleId":"com.example.any"}"#)
+    let noBundle = try runnerCommandFixture(#"{"command":"snapshot","commandId":"table"}"#)
+    let states: [(state: XCUIApplication.State, expected: Bool)] = [
+      (.unknown, false),
+      (.notRunning, false),
+      (.runningBackground, true),
+      (.runningForeground, false),
+    ]
+    let foreground = XCUIApplication.State.runningForeground
+    let unknown = XCUIApplication.State.unknown
+    let notRunning = XCUIApplication.State.notRunning
+    let raiseRows: [(fullscreen: Bool?, state: XCUIApplication.State, expected: Bool)] = [
+      (nil, foreground, false),
+      (nil, .runningBackground, true),
+      (nil, unknown, true),
+      (nil, notRunning, true),
+      (false, foreground, false),
+      (false, .runningBackground, true),
+      (false, unknown, true),
+      (false, notRunning, true),
+      (true, foreground, false),
+      (true, .runningBackground, false),
+      (true, unknown, false),
+      (true, notRunning, true),
+    ]
+    for row in states {
+      XCTAssertEqual(
+        macReadMayBeServedInBackground(command: read, targetState: row.state),
+        row.expected,
+        "read state=\(row.state.rawValue)"
+      )
+    }
+    XCTAssertFalse(
+      macReadMayBeServedInBackground(command: noBundle, targetState: .runningBackground),
+      "a read naming no app has no session app to serve in place"
+    )
+    for row in raiseRows {
+      XCTAssertEqual(
+        macAppCaptureNeedsRaise(fullscreen: row.fullscreen, targetState: row.state),
+        row.expected,
+        "capture fullscreen=\(String(describing: row.fullscreen)) state=\(row.state.rawValue)"
+      )
+    }
+  }
+}
+#endif
+
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
 extension RunnerTests {
   @MainActor
