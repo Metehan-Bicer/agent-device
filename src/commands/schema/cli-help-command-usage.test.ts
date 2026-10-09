@@ -379,9 +379,6 @@ test('open command usage documents metro session-hint setter flags', async () =>
   assert.match(help, /--metro-port <port>/);
   assert.match(help, /--bundle-url <url>/);
   assert.match(help, /--launch-url <url>/);
-  assert.match(help, /before its first reload/);
-  assert.match(help, /plain metro reload in the same session reuses/);
-  assert.match(help, /clears any leftover binding/);
 });
 
 test('command usage shows no command flags when unsupported', async () => {

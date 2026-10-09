@@ -13,7 +13,7 @@ export function resolveRuntimeTransportHints(
 ): ResolvedRuntimeTransport | undefined {
   if (!runtime) return undefined;
 
-  let host = trimRuntimeValue(runtime.metroHost);
+  let host = normalizeMetroHost(runtime.metroHost);
   let port = normalizePort(runtime.metroPort);
   let scheme: 'http' | 'https' = 'http';
   const bundleUrl = trimRuntimeValue(runtime.bundleUrl);
@@ -66,6 +66,17 @@ export function resolveRuntimeServerUrl(runtime: SessionRuntimeHints | undefined
         : bundlePath;
   }
   return url;
+}
+
+function normalizeMetroHost(value: string | undefined): string | undefined {
+  const host = trimRuntimeValue(value);
+  if (host && /[/\\?#@\s]/.test(host)) {
+    throw new AppError(
+      'INVALID_ARGS',
+      `Invalid runtime Metro host: ${host}. Use a hostname or IP address.`,
+    );
+  }
+  return host;
 }
 
 function normalizePort(value: number | undefined): number | undefined {

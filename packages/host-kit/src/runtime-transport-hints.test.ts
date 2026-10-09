@@ -91,3 +91,19 @@ test('server URLs retain mounts and normalize entries, default ports, and IPv6',
     ),
   );
 });
+
+test('rejects host delimiters before they become server URL components', () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom('localhost', '127.0.0.1', 'metro.example.test'),
+      fc.constantFrom('?', '/', '#', '\\', '@', ' ', '\n'),
+      fc.integer({ min: 1, max: 65535 }),
+      (host, delimiter, port) => {
+        assert.throws(
+          () => resolveRuntimeServerUrl({ metroHost: `${host}${delimiter}x`, metroPort: port }),
+          (error: unknown) => error instanceof AppError && error.code === 'INVALID_ARGS',
+        );
+      },
+    ),
+  );
+});
