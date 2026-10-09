@@ -165,9 +165,7 @@ describe('open command metro session hints', () => {
       await openCommandFacet.definition.invoke(client, cliInput);
 
       expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
-        metroHost: '127.0.0.1',
-        metroPort: 8082,
-        bundleUrl: 'http://127.0.0.1:8082/index.bundle',
+        controlBaseUrl: 'http://127.0.0.1:8082/',
       });
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
@@ -180,7 +178,7 @@ describe('open command metro session hints', () => {
       writeMetroSessionHints({
         stateDir,
         session: 'proj-a',
-        hints: { metroHost: '127.0.0.1', metroPort: 8083 },
+        hints: { controlBaseUrl: 'http://127.0.0.1:8083/' },
       });
       const { client } = createOpenClient({ stateDir, session: 'proj-a', sessionReused: false });
       await openCommandFacet.definition.invoke(
@@ -194,13 +192,25 @@ describe('open command metro session hints', () => {
     }
   });
 
+  test('open with only a Metro port binds reload to the local server on that port', async () => {
+    const stateDir = tempStateDir();
+    const { client } = createOpenClient({ stateDir, session: 'proj-a' });
+    await openCommandFacet.definition.invoke(
+      client,
+      openCommandFacet.cliReader(['MyApp'], flags({ metroPort: 8082 })),
+    );
+    expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
+      controlBaseUrl: 'http://localhost:8082/',
+    });
+  });
+
   test('a hintless open on an existing session keeps the current binding', async () => {
     const stateDir = tempStateDir();
     try {
       writeMetroSessionHints({
         stateDir,
         session: 'proj-a',
-        hints: { metroHost: '127.0.0.1', metroPort: 8083 },
+        hints: { controlBaseUrl: 'http://127.0.0.1:8083/' },
       });
       const { client } = createOpenClient({ stateDir, session: 'proj-a', sessionReused: true });
       await openCommandFacet.definition.invoke(
@@ -209,8 +219,7 @@ describe('open command metro session hints', () => {
       );
 
       expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
-        metroHost: '127.0.0.1',
-        metroPort: 8083,
+        controlBaseUrl: 'http://127.0.0.1:8083/',
       });
     } finally {
       rmSync(stateDir, { recursive: true, force: true });

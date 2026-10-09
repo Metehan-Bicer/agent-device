@@ -47,6 +47,27 @@ export function trimRuntimeValue(value: string | undefined): string | undefined 
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** Resolves a complete server address, retaining its mount but removing the bundle entry. */
+export function resolveRuntimeServerUrl(runtime: SessionRuntimeHints | undefined): URL | undefined {
+  const transport = resolveRuntimeTransportHints(runtime);
+  if (!transport) return undefined;
+  const host =
+    transport.host.includes(':') && !transport.host.startsWith('[')
+      ? `[${transport.host}]`
+      : transport.host;
+  const url = new URL(`${transport.scheme}://${host}:${transport.port}`);
+  if (runtime?.bundleUrl?.trim()) {
+    const bundlePath = new URL(runtime.bundleUrl).pathname.replace(/\/+$/, '');
+    const expoEntry = '/.expo/.virtual-metro-entry.bundle';
+    url.pathname = bundlePath.endsWith(expoEntry)
+      ? bundlePath.slice(0, -expoEntry.length)
+      : /\.(?:bundle|jsbundle|js)$/.test(bundlePath)
+        ? bundlePath.slice(0, bundlePath.lastIndexOf('/'))
+        : bundlePath;
+  }
+  return url;
+}
+
 function normalizePort(value: number | undefined): number | undefined {
   if (!Number.isInteger(value)) return undefined;
   if ((value as number) <= 0 || (value as number) > 65_535) return undefined;

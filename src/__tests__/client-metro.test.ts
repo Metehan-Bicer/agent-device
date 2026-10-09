@@ -807,9 +807,7 @@ test('metro reload targets the dev server bound by metro prepare in the same ses
       session: 'metro-session-hints',
     });
     assert.deepEqual(storedHints, {
-      metroHost: '127.0.0.1',
-      metroPort,
-      bundleUrl: `http://127.0.0.1:${metroPort}/index.bundle?platform=ios&dev=true&minify=false`,
+      controlBaseUrl: `http://127.0.0.1:${metroPort}/`,
     });
 
     // No explicit --metro-host/--metro-port/--bundle-url: reload must resolve against the
@@ -836,7 +834,7 @@ test('metro reload targets the dev server bound by metro prepare in the same ses
   }
 });
 
-test('metro prepare --kind expo keeps a prefixed public base URL for session reload', async () => {
+test('metro prepare keeps a public Expo address separate from the local reload address', async () => {
   const tempRoot = mkdtempForTestSync('agent-device-metro-expo-session');
   const projectRoot = path.join(tempRoot, 'project');
   const binDir = path.join(tempRoot, 'bin');
@@ -854,7 +852,7 @@ test('metro prepare --kind expo keeps a prefixed public base URL for session rel
       dependencies: { expo: '51.0.0', 'react-native': '0.0.0-test' },
     }),
   );
-  writeFakeNpx(binDir, `${publicBasePath}/reload`);
+  writeFakeNpx(binDir);
 
   const client = createAgentDeviceClient(
     { session: 'metro-expo-session', stateDir, cwd: projectRoot },
@@ -873,29 +871,45 @@ test('metro prepare --kind expo keeps a prefixed public base URL for session rel
     const prepared = await client.metro.prepare({
       projectRoot,
       kind: 'expo',
-      publicBaseUrl: `http://127.0.0.1:${metroPort}${publicBasePath}`,
+      publicBaseUrl: `https://127.0.0.1:${metroPort}${publicBasePath}`,
       port: metroPort,
       reuseExisting: false,
       installDependenciesIfNeeded: false,
     });
     pid = prepared.pid;
 
+    const nextClient = createAgentDeviceClient(
+      {
+        session: 'metro-expo-session',
+        stateDir,
+        cwd: projectRoot,
+        runtime: prepared.iosRuntime,
+      },
+      {
+        transport: async (request) => {
+          assert.equal(request.command, 'open');
+          assert.deepEqual(request.runtime, prepared.iosRuntime);
+          return { ok: true, data: {} };
+        },
+      },
+    );
+    await nextClient.apps.open({ app: 'com.example.expo' });
+    const hintedReload = await nextClient.metro.reload();
+    assert.equal(hintedReload.reloadUrl, `http://127.0.0.1:${metroPort}/reload`);
+    assert.equal(hintedReload.body, 'RELOADED');
+    assert.equal(hintedReload.transport, 'http');
+    assert.equal(
+      prepared.iosRuntime.bundleUrl,
+      `https://127.0.0.1:${metroPort}${publicBasePath}/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false`,
+    );
+
     const storedHints = readMetroSessionHints({
       stateDir: resolveDaemonPaths(stateDir).baseDir,
       session: 'metro-expo-session',
     });
     assert.deepEqual(storedHints, {
-      metroHost: '127.0.0.1',
-      metroPort,
-      bundleUrl: `http://127.0.0.1:${metroPort}${publicBasePath}/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false`,
+      controlBaseUrl: `http://127.0.0.1:${metroPort}/`,
     });
-
-    // The fake Metro process only serves this prefixed endpoint. A reload that discarded the
-    // public-base mount would receive 404 and fail its websocket fallback.
-    const hintedReload = await client.metro.reload();
-    assert.equal(hintedReload.reloadUrl, `http://127.0.0.1:${metroPort}${publicBasePath}/reload`);
-    assert.equal(hintedReload.body, 'RELOADED');
-    assert.equal(hintedReload.transport, 'http');
   } finally {
     process.env.PATH = previousPath;
     await stopProcess(pid);

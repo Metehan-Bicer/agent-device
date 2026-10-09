@@ -64,6 +64,7 @@ import {
 import type { CommandResult } from '@agent-device/command-registry/command-result';
 import { sendToDaemon } from './daemon-client/daemon-client.ts';
 import { resolveDaemonPaths } from './daemon-resolution.ts';
+import { resolveMetroServerUrl } from './metro/metro-reload-endpoints.ts';
 import { prepareMetroRuntime, reloadMetro } from './metro/client-metro.ts';
 import {
   clearMetroSessionHints,
@@ -370,7 +371,7 @@ export function createAgentDeviceClient(
           metroHost: options.metroHost,
           metroPort: options.metroPort,
           bundleUrl: options.bundleUrl,
-          runtime: config.runtime ?? resolveMetroSessionHints(config),
+          runtime: resolveMetroSessionHints(config) ?? config.runtime,
           timeoutMs: options.timeoutMs,
         }),
     },
@@ -585,28 +586,24 @@ function metroSessionHintsScope(
 // The metro-sessions file is the session's dev-server binding; see MetroSessionHints.
 function persistMetroSessionHints(
   config: AgentDeviceClientConfig,
-  result: Pick<MetroPrepareResult, 'statusUrl' | 'bridge' | 'iosRuntime' | 'androidRuntime'>,
+  result: Pick<MetroPrepareResult, 'statusUrl'>,
 ): void {
   try {
-    const url = new URL(result.statusUrl);
-    const port = Number.parseInt(url.port, 10);
-    if (!url.hostname || !Number.isInteger(port)) return;
-    // Bridge runtimes carry remote bundle URLs; persist local-flow bundle URLs only.
-    const bundleUrl = result.bridge
-      ? undefined
-      : (result.iosRuntime.bundleUrl ?? result.androidRuntime.bundleUrl);
     writeMetroSessionHints({
       ...metroSessionHintsScope(config),
-      hints: { metroHost: url.hostname, metroPort: port, bundleUrl },
+      hints: { controlBaseUrl: new URL('.', result.statusUrl).toString() },
     });
   } catch {
     // Session-hint persistence is best-effort; reload still works with explicit flags.
   }
 }
 
-function resolveMetroSessionHints(config: AgentDeviceClientConfig): MetroSessionHints | undefined {
+function resolveMetroSessionHints(
+  config: AgentDeviceClientConfig,
+): SessionRuntimeHints | undefined {
   try {
-    return readMetroSessionHints(metroSessionHintsScope(config));
+    const binding = readMetroSessionHints(metroSessionHintsScope(config));
+    return binding ? { bundleUrl: binding.controlBaseUrl } : undefined;
   } catch {
     return undefined;
   }
@@ -615,12 +612,14 @@ function resolveMetroSessionHints(config: AgentDeviceClientConfig): MetroSession
 function metroHintsFromRuntime(
   runtime: SessionRuntimeHints | undefined,
 ): MetroSessionHints | undefined {
-  if (!runtime) return undefined;
-  const { metroHost, metroPort, bundleUrl } = runtime;
-  if (metroHost === undefined && metroPort === undefined && bundleUrl === undefined) {
+  if (
+    !runtime ||
+    (runtime.metroHost === undefined &&
+      runtime.metroPort === undefined &&
+      runtime.bundleUrl === undefined)
+  )
     return undefined;
-  }
-  return { metroHost, metroPort, bundleUrl };
+  return { controlBaseUrl: resolveMetroServerUrl({ runtime }).toString() };
 }
 
 // Hint flags rebind the session's dev server; a hintless open that created the session clears
@@ -635,6 +634,7 @@ function recordMetroSessionHintsAfterOpen(params: {
     const scope = metroSessionHintsScope(params.config, params.options);
     const hints = metroHintsFromRuntime(params.runtime);
     if (hints) {
+      if (params.options.runtime === undefined && readMetroSessionHints(scope)) return;
       writeMetroSessionHints({ ...scope, hints });
       return;
     }

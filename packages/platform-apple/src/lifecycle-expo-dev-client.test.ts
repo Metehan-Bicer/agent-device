@@ -53,7 +53,7 @@ test('an expo-dev-client is launched through its dev-client URL instead of a pla
 
   await lifecycle.openApplication(input);
 
-  expect(applyRuntimeHints).toHaveBeenCalledOnce();
+  expect(applyRuntimeHints).not.toHaveBeenCalled();
   expect(events).toContain(`open ${DEV_CLIENT_URL}`);
   expect(events).not.toContain('open');
 });

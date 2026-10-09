@@ -106,7 +106,6 @@ async function openAppleApplication(
 ): Promise<OpenApplicationOutcome> {
   const timing: MutableOpenTiming = {};
   const localIosSimulator = isIosSimulator(binding.device);
-  let launch = openLaunchPlan(binding.device, input, localIosSimulator);
   const runner = createRunnerPrewarm(host, binding, input, timing);
   const policy = resolveRunnerPrewarmPolicy(binding.device, input, localIosSimulator);
   if (policy.runnerDemand) timing.runnerDemand = policy.runnerDemand;
@@ -133,13 +132,11 @@ async function openAppleApplication(
       localIosSimulator,
       timing,
     );
-    if (devClientLaunchUrl) {
-      launch = openLaunchPlan(
-        binding.device,
-        { ...input, runtimeLaunchUrl: devClientLaunchUrl },
-        localIosSimulator,
-      );
-    }
+    const launch = openLaunchPlan(
+      binding.device,
+      devClientLaunchUrl ? { ...input, runtimeLaunchUrl: devClientLaunchUrl } : input,
+      localIosSimulator,
+    );
     await prewarmAppleRunnerBeforeOpen(runner, shouldPrewarmRunner, input.prewarmRunnerBeforeOpen);
     const runnerTargetPredatesOpen = runner.wasAwaited();
     await dispatchAppleOpen(binding, input, launch, localIosSimulator, timing);
@@ -199,10 +196,6 @@ async function closeAppleApplicationForRelaunch(
   timing.relaunchCloseDurationMs = elapsed(startedAtMs);
 }
 
-/**
- * Writes the transport hints, then returns the launch URL an expo-dev-client needs to follow them:
- * it ignores the written `RCT_jsLocation` and reads its server from a deep link instead (#1245).
- */
 async function applyAppleOpenRuntimeHints(
   binding: BoundAppleInteractor,
   input: OpenApplicationInput,
@@ -210,16 +203,22 @@ async function applyAppleOpenRuntimeHints(
   timing: MutableOpenTiming,
 ): Promise<string | undefined> {
   if (!hasRuntimeTransportHintValues(input.runtimeHints)) return undefined;
-  if (!input.applyRuntimeHints) {
-    throw new AppError('COMMAND_FAILED', 'Runtime hint operation was not admitted for this open.', {
-      reason: 'runtime-hints-operation-missing',
-    });
-  }
   const startedAtMs = Date.now();
-  await input.applyRuntimeHints({ appId: input.appBundleId, values: input.runtimeHints });
   const devClientLaunchUrl = localIosSimulator
     ? await (await loadExpoDevClientLaunch()).resolveExpoDevClientLaunchUrl(binding.device, input)
     : undefined;
+  if (!devClientLaunchUrl) {
+    if (!input.applyRuntimeHints) {
+      throw new AppError(
+        'COMMAND_FAILED',
+        'Runtime hint operation was not admitted for this open.',
+        {
+          reason: 'runtime-hints-operation-missing',
+        },
+      );
+    }
+    await input.applyRuntimeHints({ appId: input.appBundleId, values: input.runtimeHints });
+  }
   timing.runtimeHintsDurationMs = elapsed(startedAtMs);
   return devClientLaunchUrl;
 }

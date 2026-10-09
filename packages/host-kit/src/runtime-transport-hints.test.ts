@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
+import fc from 'fast-check';
 import { AppError } from '@agent-device/kernel/errors';
-import { resolveRuntimeTransportHints, trimRuntimeValue } from './runtime-transport-hints.ts';
+import {
+  resolveRuntimeServerUrl,
+  resolveRuntimeTransportHints,
+  trimRuntimeValue,
+} from './runtime-transport-hints.ts';
 
 test('resolves HTTP and HTTPS bundle URLs with their default ports', () => {
   assert.deepEqual(
@@ -47,6 +52,7 @@ test('invalid bundle URLs retain the existing typed argument error', () => {
       return true;
     },
   );
+  assert.throws(() => resolveRuntimeServerUrl({ metroHost: 'bad host', metroPort: 8081 }));
 });
 
 test('unsupported bundle schemes do not complete an otherwise missing transport', () => {
@@ -61,5 +67,27 @@ test('unsupported bundle schemes do not complete an otherwise missing transport'
       bundleUrl: 'ftp://bundle.example.test/index.bundle',
     }),
     { host: 'metro.example.test', port: 8081, scheme: 'http' },
+  );
+});
+
+test('server URLs retain mounts and normalize entries, default ports, and IPv6', () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom('tenant-42', 'workspace', 'metro'), { maxLength: 3 }),
+      fc.constantFrom(
+        'index.bundle',
+        'index.js',
+        'main.jsbundle',
+        '.expo/.virtual-metro-entry.bundle',
+      ),
+      fc.constantFrom('https://metro.example.test', 'http://[::1]:8082'),
+      (segments, entry, origin) => {
+        const mount = segments.length ? `/${segments.join('/')}` : '';
+        const result = resolveRuntimeServerUrl({
+          bundleUrl: `${origin}${mount}/${entry}?platform=ios&dev=true`,
+        });
+        assert.equal(result?.toString(), `${origin}${mount || '/'}`);
+      },
+    ),
   );
 });

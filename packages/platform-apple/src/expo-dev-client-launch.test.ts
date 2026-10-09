@@ -46,22 +46,17 @@ afterEach(() => {
 test.each([
   [
     'an http server',
-    { host: '127.0.0.1', port: 8085, scheme: 'http' as const },
+    new URL('http://127.0.0.1:8085'),
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085',
   ],
   [
     'an https server',
-    { host: 'metro.example.test', port: 443, scheme: 'https' as const },
-    'exp+dev-slug://expo-development-client/?url=https%3A%2F%2Fmetro.example.test%3A443',
+    new URL('https://metro.example.test'),
+    'exp+dev-slug://expo-development-client/?url=https%3A%2F%2Fmetro.example.test',
   ],
   [
     'an IPv6 host',
-    { host: '::1', port: 8081, scheme: 'http' as const },
-    'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8081',
-  ],
-  [
-    'an already-bracketed IPv6 host',
-    { host: '[::1]', port: 8081, scheme: 'http' as const },
+    new URL('http://[::1]:8081'),
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8081',
   ],
 ])('builds the dev-client launch URL for %s', (_name, transport, expected) => {
@@ -101,6 +96,19 @@ test('keeps a single pair of brackets around an IPv6 bundle URL host', async () 
   await expect(resolveExpoDevClientLaunchUrl(SIMULATOR, input)).resolves.toBe(
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8090',
   );
+});
+
+test('keeps the server mount when opening a path-prefixed Expo bundle', async () => {
+  resolveScheme.mockResolvedValue('exp+dev-slug');
+  const input = openInput({
+    runtimeHints: {
+      bundleUrl:
+        'https://metro.example.test/tenant-42/.expo/.virtual-metro-entry.bundle?platform=ios',
+    },
+  });
+
+  const launchUrl = await resolveExpoDevClientLaunchUrl(SIMULATOR, input);
+  expect(new URL(launchUrl!).searchParams.get('url')).toBe('https://metro.example.test/tenant-42');
 });
 
 test.each([
