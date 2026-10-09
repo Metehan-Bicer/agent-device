@@ -761,6 +761,42 @@ extension RunnerTests {
     }
   }
 
+  /// The identity rule the served read must go through (#3254 review): with the cache bound to a
+  /// pid an outside relaunch replaced, a served read answers the process a bound read would have
+  /// read, not the dead handle the cache holds. The bogus cached pid makes the wiring observable:
+  /// the served preparation must leave the live pid behind, so deleting the
+  /// `refreshCachedTargetIfProcessChanged` call from the arm leaves the bogus value and fails here.
+  @MainActor
+  func testMacBackgroundReadRefreshesACachedHandleFromADeadPid() throws {
+    let target = try startMacTargetAndLoseTheForeground()
+    let bundleId = Self.macBackgroundTargetBundleId
+    defer {
+      invalidateCachedTarget(reason: "unit_test_cleanup")
+      pendingTargetActivation = nil
+      target.terminate()
+    }
+    let command = try runnerCommandFixture(
+      #"{"command":"snapshot","commandId":"read","appBundleId":"\#(bundleId)"}"#
+    )
+    // Plant the residue an outside relaunch leaves between two reads: the cache still names this
+    // app and still holds a handle, but the pid it recorded is dead.
+    mainOwned.app = target
+    mainOwned.bundleId = bundleId
+    mainOwned.processIdentifier = 999_999
+    pendingTargetActivation = nil
+
+    guard case .context(let prepared) = prepareActiveCommandContext(command: command) else {
+      return XCTFail("the read must be served")
+    }
+    XCTAssertEqual(prepared.app.state, .runningBackground, "still served in place")
+    XCTAssertNil(pendingTargetActivation, "the refresh must not activate")
+    XCTAssertNotEqual(
+      mainOwned.processIdentifier,
+      999_999,
+      "a served read must run the shared identity refresh, not answer from a dead pid"
+    )
+  }
+
   /// The scope limit that keeps this from being a blanket no-activate rule: an interaction against
   /// the same background app still comes forward through the same preparation, because on macOS the
   /// XCTest path drives events into the foreground window and a background click would land on

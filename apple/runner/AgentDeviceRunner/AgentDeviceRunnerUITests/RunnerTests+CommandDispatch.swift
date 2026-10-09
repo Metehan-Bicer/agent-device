@@ -536,19 +536,24 @@ extension RunnerTests {
 #else
       // The platform exception, written once: `SystemSurfaceHostRegistry` registers no hosts off iOS,
       // so nothing is ever served in place there and such a command keeps the activation route this
-      // axis found it on. The macOS host never sends one of this arm's commands here: `alert` answers
-      // through the macOS helper (`runAppleAlert`'s host split) and `action-button` is refused by the
-      // owner's Action Button fact (`hasAppleActionButton`) before dispatch, so no macOS request can
-      // be activated from this arm, and only the tvOS and visionOS runners reach it off iOS.
+      // axis found it on. The host never sends either command here on macOS — `alert` answers through
+      // the helper and `action-button` is refused by its owner fact before dispatch — so off iOS this
+      // route is reached only by the tvOS and visionOS runners.
       return prepareActivatedTarget(command: command)
 #endif
     case .existingApp:
       // No request-dependent bypass here: it decides by querying the cached target's state, and a
       // command that may bring nothing forward has nothing for it to settle.
 #if os(macOS)
-      if macReadMayBeServedInBackground(command) {
-        // Served in place with no binding, the same shape the iOS `.presentedSurface` arm takes:
-        // the next command that needs the app forward pays for its own activation.
+      if let bundleId = command.appBundleId?.trimmedNonEmpty,
+        macReadMayBeServedInBackground(
+          command: command,
+          targetState: XCUIApplication(bundleIdentifier: bundleId).state
+        )
+      {
+        // Identity first, through the shared rule: a served read must answer the process a bound
+        // read would have read, not a pid an outside relaunch replaced.
+        refreshCachedTargetIfProcessChanged(bundleId: bundleId)
         return .context(ActiveCommandContext(app: resolveAppWithoutActivation(command: command)))
       }
 #endif
@@ -786,37 +791,14 @@ extension RunnerTests {
     return XCUIApplication(bundleIdentifier: bundleId)
   }
 
-  /// Whether a macOS `.existingApp` read may be served from the app exactly where it sits: the
-  /// request names an app that is running but behind other windows. On a desktop the foreground
-  /// repair is not a no-op for the user — it takes their frontmost app away for a command that only
-  /// asked to look, which is what #3254 reports. The answer comes from `state`, which never launches,
-  /// so a stopped or unknown app keeps the standing route untouched, including the launch that route
-  /// performs; only the raise of an already-running app is in question here.
+  /// A macOS `.existingApp` read is served in place only for `.runningBackground`: the one state
+  /// whose tree answers while the app sits behind other windows. Every other state keeps the
+  /// activating route, matching `targetNeedsActivation`'s macOS set, and serving in place books no
+  /// activation fact or marker — the fact channel records only a repair performed, so a served
+  /// read answers as an ordinary read (#3254; decision record in #3338).
   ///
-  /// Only the one state the host can answer a full tree from is served in place. Anything else —
-  /// `.unknown`, `.notRunning`, and on non-macOS builds the suspended state, which the macOS SDK
-  /// does not declare and the host lane therefore cannot name — stays on the activating route on
-  /// purpose: an app that cannot promise an answerable tree should pay the repair that settles it
-  /// rather than trade a focus steal for an empty read. This mirrors `targetNeedsActivation`'s
-  /// macOS set, and `macAppCaptureNeedsRaise` agrees with it state for state: the suspended or
-  /// unknown app that a read activates is the same app a window-level capture raises.
-  ///
-  /// Serving in place books no activation fact and carries no substitute marker, decided with #3254
-  /// rather than by omission: the activation channel records only a repair that was performed, and
-  /// the observation payload's state belongs to the iOS observe-only contract, so an
-  /// invented marker would put the same integer in two contracts with different meanings. The tree
-  /// is live, not degraded — the measured rect drift was time, not foreground state — and nothing
-  /// on the host acts on a "was background" fact today, so the answer travels as an ordinary read.
-  /// `testMacReadOfABackgroundAppIsServedInBackgroundWithoutActivating` pins the silence so it stays
-  /// owned: a future disclosure must change that assertion on purpose, not appear silently.
-  @MainActor
-  func macReadMayBeServedInBackground(_ command: Command) -> Bool {
-    guard let bundleId = command.appBundleId?.trimmedNonEmpty else { return false }
-    return macReadMayBeServedInBackground(command: command, targetState: XCUIApplication(bundleIdentifier: bundleId).state)
-  }
-
-  /// The state split of `macReadMayBeServedInBackground`, separated from the probe so the host lane
-  /// pins every state the answer branches on, the same way `macAppCaptureNeedsRaise` is pinned.
+  /// The probe handle must be fresh, not cached: a cached handle can address a pid an outside
+  /// relaunch replaced, whose `.state` would answer for the dead process.
   func macReadMayBeServedInBackground(command: Command, targetState: XCUIApplication.State) -> Bool {
     command.appBundleId?.trimmedNonEmpty != nil && targetState == .runningBackground
   }
