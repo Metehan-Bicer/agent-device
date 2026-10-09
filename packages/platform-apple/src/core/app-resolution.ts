@@ -205,6 +205,44 @@ export async function resolveIosSimulatorDeepLinkBundleId(
   return matches.length === 1 ? matches[0]?.bundleId : undefined;
 }
 
+const EXPO_DEV_CLIENT_SCHEME_PREFIX = 'exp+';
+
+/**
+ * The `exp+<slug>` scheme an installed expo-dev-client registers to receive its dev-server URL,
+ * when the app declares exactly one and is that scheme's only owner on the simulator: with a
+ * second owner, such as another build variant, `simctl openurl` could hand the URL to the wrong
+ * app. Bare React Native apps and Expo Go declare none. `timeoutMs` is one deadline shared by
+ * every probe.
+ */
+export async function resolveIosSimulatorExpoDevClientScheme(
+  device: DeviceInfo,
+  bundleId: string,
+  options: SimulatorAppListOptions = {},
+): Promise<string | undefined> {
+  if (!isIosFamily(device) || device.kind !== 'simulator') return undefined;
+  const remaining = remainingLookupBudget(options);
+  const container = await runSimctlForDevice(
+    device,
+    ['get_app_container', device.id, bundleId, 'app'],
+    { allowFailure: true, ...remaining() },
+  );
+  const appPath = String(container.stdout).trim();
+  if (container.exitCode !== 0 || !appPath) return undefined;
+  const schemes = await readIosSimulatorAppUrlSchemes(
+    path.join(appPath, 'Info.plist'),
+    remaining(),
+  );
+  const devClientSchemes = [...schemes].filter(
+    (scheme) =>
+      scheme.startsWith(EXPO_DEV_CLIENT_SCHEME_PREFIX) &&
+      scheme.length > EXPO_DEV_CLIENT_SCHEME_PREFIX.length,
+  );
+  if (devClientSchemes.length !== 1) return undefined;
+  const scheme = devClientSchemes[0];
+  const owner = await resolveIosSimulatorDeepLinkBundleId(device, `${scheme}://`, remaining());
+  return owner === bundleId ? scheme : undefined;
+}
+
 function remainingLookupBudget({
   timeoutMs,
   signal,

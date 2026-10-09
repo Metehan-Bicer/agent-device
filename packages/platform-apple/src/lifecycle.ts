@@ -33,6 +33,9 @@ const POST_CLOSE_SETTLE_MS = 300;
 let launchConfirmationModule: Promise<typeof import('./launch-confirmation.ts')> | undefined;
 const loadLaunchConfirmation = () =>
   (launchConfirmationModule ??= import('./launch-confirmation.ts'));
+let expoDevClientLaunchModule: Promise<typeof import('./expo-dev-client-launch.ts')> | undefined;
+const loadExpoDevClientLaunch = () =>
+  (expoDevClientLaunchModule ??= import('./expo-dev-client-launch.ts'));
 
 /** The Apple package receives only the lazy tools and readiness ports it owns. */
 type AppleLifecycleHost = Pick<
@@ -103,7 +106,7 @@ async function openAppleApplication(
 ): Promise<OpenApplicationOutcome> {
   const timing: MutableOpenTiming = {};
   const localIosSimulator = isIosSimulator(binding.device);
-  const launch = openLaunchPlan(binding.device, input, localIosSimulator);
+  let launch = openLaunchPlan(binding.device, input, localIosSimulator);
   const runner = createRunnerPrewarm(host, binding, input, timing);
   const policy = resolveRunnerPrewarmPolicy(binding.device, input, localIosSimulator);
   if (policy.runnerDemand) timing.runnerDemand = policy.runnerDemand;
@@ -124,7 +127,19 @@ async function openAppleApplication(
       retainRunnerForRelaunch,
       timing,
     );
-    await applyAppleOpenRuntimeHints(input, timing);
+    const devClientLaunchUrl = await applyAppleOpenRuntimeHints(
+      binding,
+      input,
+      localIosSimulator,
+      timing,
+    );
+    if (devClientLaunchUrl) {
+      launch = openLaunchPlan(
+        binding.device,
+        { ...input, runtimeLaunchUrl: devClientLaunchUrl },
+        localIosSimulator,
+      );
+    }
     await prewarmAppleRunnerBeforeOpen(runner, shouldPrewarmRunner, input.prewarmRunnerBeforeOpen);
     const runnerTargetPredatesOpen = runner.wasAwaited();
     await dispatchAppleOpen(binding, input, launch, localIosSimulator, timing);
@@ -184,11 +199,17 @@ async function closeAppleApplicationForRelaunch(
   timing.relaunchCloseDurationMs = elapsed(startedAtMs);
 }
 
+/**
+ * Writes the transport hints, then returns the launch URL an expo-dev-client needs to follow them:
+ * it ignores the written `RCT_jsLocation` and reads its server from a deep link instead (#1245).
+ */
 async function applyAppleOpenRuntimeHints(
+  binding: BoundAppleInteractor,
   input: OpenApplicationInput,
+  localIosSimulator: boolean,
   timing: MutableOpenTiming,
-): Promise<void> {
-  if (!hasRuntimeTransportHintValues(input.runtimeHints)) return;
+): Promise<string | undefined> {
+  if (!hasRuntimeTransportHintValues(input.runtimeHints)) return undefined;
   if (!input.applyRuntimeHints) {
     throw new AppError('COMMAND_FAILED', 'Runtime hint operation was not admitted for this open.', {
       reason: 'runtime-hints-operation-missing',
@@ -196,7 +217,11 @@ async function applyAppleOpenRuntimeHints(
   }
   const startedAtMs = Date.now();
   await input.applyRuntimeHints({ appId: input.appBundleId, values: input.runtimeHints });
+  const devClientLaunchUrl = localIosSimulator
+    ? await (await loadExpoDevClientLaunch()).resolveExpoDevClientLaunchUrl(binding.device, input)
+    : undefined;
   timing.runtimeHintsDurationMs = elapsed(startedAtMs);
+  return devClientLaunchUrl;
 }
 
 async function prewarmAppleRunnerBeforeOpen(
