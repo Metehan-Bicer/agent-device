@@ -1,5 +1,5 @@
 import { asAppError } from '@agent-device/kernel/errors';
-import type { SnapshotNode } from '@agent-device/kernel/snapshot';
+import type { SnapshotNode, SnapshotState } from '@agent-device/kernel/snapshot';
 import { absenceCaptureOptionError } from '@agent-device/selectors/absence-observation-errors';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
 import type { DaemonRequest, DaemonResponse } from './daemon-request.ts';
@@ -186,7 +186,11 @@ export async function dispatchGetViaRuntime(
       const data = toDaemonGetData(result);
       return staleRefsWarning ? { ...data, warning: staleRefsWarning } : data;
     },
-    { ref: resolvedRuntime.ref, sessionStore: params.sessionStore },
+    {
+      ref: resolvedRuntime.ref,
+      sessionStore: params.sessionStore,
+      consumed: params.consumedSnapshot,
+    },
   );
   return withCaptureDisclosures({
     response,
@@ -255,7 +259,11 @@ export async function dispatchIsViaRuntime(
       );
       return stripSelectorChain(strippedResult);
     },
-    { ref: resolvedRuntime.ref, sessionStore: params.sessionStore },
+    {
+      ref: resolvedRuntime.ref,
+      sessionStore: params.sessionStore,
+      consumed: params.consumedSnapshot,
+    },
   );
   return withCaptureDisclosures({
     response: await maybeAndroidForegroundBlockerResponse(params, response, `is ${predicate}`),
@@ -312,18 +320,30 @@ function parseGetTarget(req: DaemonRequest):
  * `get attrs`): ADR 0014's ambiguity-issuance rule then runs before flattening,
  * so a printed candidate is admitted on the frame that listed it — the same
  * contract the acting refusal gets through the touch runtime (#2870 review).
+ * `consumed` is the capture runtime's slot for the tree THIS request consumed:
+ * issuance is only valid against a capture the session actually stored under
+ * that generation, and a sparse-quality capture deliberately stores nothing.
  * Routes that never print candidates (`wait`, read-only `find`) pass nothing
  * and keep the plain flatten.
  */
 export async function toDaemonResponse(
   task: () => Promise<Record<string, unknown>>,
-  issuance?: { ref: SessionRef | undefined; sessionStore: SessionStore },
+  issuance?: {
+    ref: SessionRef | undefined;
+    sessionStore: SessionStore;
+    consumed: { state?: SnapshotState } | undefined;
+  },
 ): Promise<DaemonResponse> {
   try {
     return { ok: true, data: await task() };
   } catch (error) {
     const appError = issuance
-      ? publishAmbiguousMatchCandidateRefs(issuance.ref, issuance.sessionStore, asAppError(error))
+      ? publishAmbiguousMatchCandidateRefs(
+          issuance.ref,
+          issuance.sessionStore,
+          asAppError(error),
+          issuance.consumed?.state,
+        )
       : asAppError(error);
     return errorResponse(appError.code, appError.message, appError.details);
   }

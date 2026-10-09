@@ -262,12 +262,14 @@ for (const retire of [false, true]) {
 }
 
 // #2870 review: every response that prints candidate @refs must issue those
-// refs on the frame they came from. One rule, consumed by the acting refusal
+// refs on the frame they came from, and issuance is only valid against the
+// tree that generation describes. One rule, consumed by the acting refusal
 // (touch runtime) and the strict-read refusals (is / get attrs dispatch).
 test('ambiguous refusals issue their printed candidates as a partial frame', () => {
   const store = makeSessionStore();
   const session = makeSession();
-  setSessionSnapshot(session, makeSnapshot());
+  const captured = makeSnapshot();
+  setSessionSnapshot(session, captured);
   const ref = store.publish('cwd:ambiguity:default', session);
   const published = publishAmbiguousMatchCandidateRefs(
     ref,
@@ -276,28 +278,78 @@ test('ambiguous refusals issue their printed candidates as a partial frame', () 
       matches: 4,
       candidates: ['@e2 [text] "Team Standup"', '@e5 [button] "Team Standup"'],
     }),
+    // The consumed capture IS the stored tree: what the capture runtime does
+    // for every non-sparse read, node identity included.
+    captured,
   );
   expect(published.details?.refsGeneration).toBe(session.snapshotGeneration);
   expect(refFrameScope(session)).toEqual(new Set(['e2', 'e5']));
 });
 
-test('a non-ambiguity read refusal issues nothing', () => {
+/**
+ * The P1 the review caught: the capture runtime DELIBERATELY does not store a
+ * sparse-quality capture (`updateSessionSnapshot` skips it, and `issueSettleRefs`
+ * documents the same ruling for the settle path), so candidates minted from
+ * that tree cannot be issued against the PREVIOUS stored tree's generation —
+ * a printed @ref would resolve to a different node. Printing and issuing are
+ * one decision: no stored tree, no printed candidates, and the hint drops the
+ * "act on a printed candidate" route it could not honor.
+ */
+test('a sparse capture that was never stored issues nothing and prints no candidates', () => {
   const store = makeSessionStore();
   const session = makeSession();
   setSessionSnapshot(session, makeSnapshot());
+  const ref = store.publish('cwd:ambiguity-sparse:default', session);
+  const storedNodes = session.snapshot!.nodes;
+  // The sparse capture the failing request consumed: a different tree, never
+  // stored (that skip is the capture runtime's deliberate quality ruling).
+  const sparseCapture: SnapshotState = {
+    nodes: [],
+    createdAt: Date.now(),
+    backend: 'xctest',
+    snapshotQuality: { state: 'sparse', backend: 'tree', reasonCode: 'sparse-tree' },
+  };
+  const published = publishAmbiguousMatchCandidateRefs(
+    ref,
+    store,
+    new AppError('AMBIGUOUS_MATCH', 'Selector matched 2 elements', {
+      matches: 2,
+      candidates: ['@e2 [text] "a"', '@e3 [text] "b"'],
+      hint: 'Narrow the selector with role/id/longer text, or act on a printed candidate with a command that takes refs, such as press.',
+    }),
+    sparseCapture,
+  );
+  expect(published.code).toBe('AMBIGUOUS_MATCH');
+  expect(published.details?.refsGeneration).toBeUndefined();
+  expect(published.details?.candidates).toBeUndefined();
+  // The truthful count survives; the unusable affordance does not.
+  expect(published.details?.matches).toBe(2);
+  expect(String(published.details?.hint)).not.toMatch(/printed candidate/);
+  // Nothing was issued: the frame stays untouched and the stored tree was
+  // never replaced by the sparse capture.
+  expect(session.refFrame).toBeUndefined();
+  expect(session.snapshot!.nodes).toBe(storedNodes);
+});
+
+test('a non-ambiguity read refusal issues nothing', () => {
+  const store = makeSessionStore();
+  const session = makeSession();
+  const captured = makeSnapshot();
+  setSessionSnapshot(session, captured);
   const ref = store.publish('cwd:ambiguity-none:default', session);
   const original = new AppError('COMMAND_FAILED', 'Selector did not match: label="X"');
-  const returned = publishAmbiguousMatchCandidateRefs(ref, store, original);
+  const returned = publishAmbiguousMatchCandidateRefs(ref, store, original, captured);
   expect(returned).toBe(original);
   // The ref-frame accessor defaults a never-issued frame to PRISTINE; the
   // raw slot staying unset is what "untouched" means here.
   expect(session.refFrame).toBeUndefined();
 });
 
-test('ambiguity without a live session ref (retired or sessionless route) issues nothing', () => {
+test('ambiguity on a retired session ref issues nothing and prints no candidates', () => {
   const store = makeSessionStore();
   const session = makeSession();
-  setSessionSnapshot(session, makeSnapshot());
+  const captured = makeSnapshot();
+  setSessionSnapshot(session, captured);
   const ref = store.publish('cwd:ambiguity-retired:default', session);
   store.retire(ref);
   const published = publishAmbiguousMatchCandidateRefs(
@@ -307,7 +359,57 @@ test('ambiguity without a live session ref (retired or sessionless route) issues
       matches: 2,
       candidates: ['@e2 [text] "a"', '@e3 [text] "b"'],
     }),
+    captured,
   );
   expect(published.details?.refsGeneration).toBeUndefined();
+  expect(published.details?.candidates).toBeUndefined();
+  expect(published.details?.matches).toBe(2);
+  expect(session.refFrame).toBeUndefined();
+});
+
+/**
+ * The sessionless shape `is` can travel (a selector route whose `lookup` found
+ * no live ref): with no session there is no generation to freeze and no frame
+ * to authorize, so the refusal must degrade to the count-only form too rather
+ * than print refs nobody can act on.
+ */
+test('ambiguity without a session ref (sessionless route) issues nothing and prints no candidates', () => {
+  const store = makeSessionStore();
+  const published = publishAmbiguousMatchCandidateRefs(
+    undefined,
+    store,
+    new AppError('AMBIGUOUS_MATCH', 'Selector matched 2 elements', {
+      matches: 2,
+      candidates: ['@e2 [text] "a"', '@e3 [text] "b"'],
+    }),
+    makeSnapshot(),
+  );
+  expect(published.code).toBe('AMBIGUOUS_MATCH');
+  expect(published.details?.refsGeneration).toBeUndefined();
+  expect(published.details?.candidates).toBeUndefined();
+  expect(published.details?.matches).toBe(2);
+});
+
+/**
+ * A session whose lifetime never stored a tree has no generation to freeze
+ * (both `setSessionSnapshot` and every capture runtime mint it on the first
+ * store). Same rule as the sparse case: nothing issuable, nothing printable.
+ */
+test('ambiguity on a session with no stored snapshot issues nothing and prints no candidates', () => {
+  const store = makeSessionStore();
+  const session = makeSession();
+  const ref = store.publish('cwd:ambiguity-nogen:default', session);
+  const published = publishAmbiguousMatchCandidateRefs(
+    ref,
+    store,
+    new AppError('AMBIGUOUS_MATCH', 'Selector matched 2 elements', {
+      matches: 2,
+      candidates: ['@e2 [text] "a"', '@e3 [text] "b"'],
+    }),
+    makeSnapshot(),
+  );
+  expect(published.details?.refsGeneration).toBeUndefined();
+  expect(published.details?.candidates).toBeUndefined();
+  expect(published.details?.matches).toBe(2);
   expect(session.refFrame).toBeUndefined();
 });

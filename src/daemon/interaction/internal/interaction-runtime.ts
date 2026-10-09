@@ -8,7 +8,7 @@ import type {
 } from '../../../backend.ts';
 import { createCommandSurfaceAgentDevice } from '../../../command-runtime/runtime-command-surface.ts';
 import { getRequestSignal } from '@agent-device/host-kit/request';
-import type { Rect } from '@agent-device/kernel/snapshot';
+import type { Rect, SnapshotState } from '@agent-device/kernel/snapshot';
 import type { DaemonCommandContext } from '../../context.ts';
 import { createDaemonRuntimePolicy } from '../../runtime-policy.ts';
 import { buildAppleRunnerRequestOptions } from '../../apple-runner-options.ts';
@@ -40,6 +40,14 @@ export function createInteractionRuntimeForRoute(
     pairedGestureViewport?: Rect;
     touchExecutor?: BoundTouchExecutor;
     gestures?: BoundGestureExecutor;
+    /**
+     * Filled with the LAST capture this request consumed. ADR 0014 ambiguity
+     * issuance is only valid against a tree the session stored under the
+     * generation it freezes, and a sparse-quality capture deliberately stores
+     * nothing — the refusal seam needs the same consumed-capture slot the
+     * selector routes carry (`consumedSnapshot`), owned per dispatch.
+     */
+    consumedCapture?: { state?: SnapshotState };
   },
 ) {
   const ref = bindInteractionSession(params).sessionRef;
@@ -58,6 +66,7 @@ export function createInteractionRuntimeForRoute(
         params.contextFromFlags,
         options,
       );
+      if (params.consumedCapture) params.consumedCapture.state = snapshot;
       return recordCaptureProof(params.captureProof, snapshot);
     },
     runtimeSessions: createDaemonRuntimeSessionStore({

@@ -174,3 +174,62 @@ test('a plain candidate ref from the ambiguity refusal is refused, not silently 
   }
   expect(mockTapPoint).not.toHaveBeenCalled();
 });
+
+/**
+ * The P1 the review caught (cubic + coordinator): the capture runtime
+ * DELIBERATELY does not store a sparse-quality capture
+ * (`selector-capture-runtime.ts` `updateSessionSnapshot`: sparse verdicts skip
+ * the store, exactly as `issueSettleRefs` documents for the settle path). So
+ * candidates minted from that never-stored tree cannot be issued against the
+ * PREVIOUS stored tree's generation — a printed `@ref` would resolve against
+ * the older tree, the same wrong-node bind this rule exists to prevent.
+ * Printing and issuing are ONE decision: when the consumed capture was not
+ * stored, the refusal keeps its truthful count and prints no candidate refs.
+ */
+test('an ambiguous is on a sparse capture prints no candidates and issues nothing', async () => {
+  const sessionStore = makeSessionStore();
+  const sessionName = 'is-ambiguity-sparse';
+  // A stored frame from an earlier command, as in the reviewer's sequence.
+  const session = makeStaleRefSession(sessionName);
+  session.device = IOS_SIMULATOR;
+  sessionStore.publish(sessionName, session);
+  const storedNodes = session.snapshot!.nodes;
+
+  // The ambiguous two-button tree, but delivered with a SPARSE quality
+  // verdict: the capture runtime refuses to store it, so the session keeps
+  // describing the older tree. `is` itself does not gate on the verdict; the
+  // readUnique door is reached on this tree. (The verdict's `backend` is the
+  // acquisition backend vocabulary, not the producer.)
+  const sparseCapture = () => ({
+    ...ambiguousFullCapture(),
+    quality: {
+      state: 'sparse' as const,
+      backend: 'tree' as const,
+      reasonCode: 'sparse-tree' as const,
+    },
+  });
+  const fixture = selectorCaptureFixture({ snapshot: sparseCapture });
+  const response = await dispatchIsViaRuntime({
+    req: isRequest(sessionName, ['visible', 'label="Deploy"']),
+    sessionName,
+    sessionStore,
+    inspectFacts: fixture.inspectFacts,
+    bindDevice: fixture.bindDevice,
+  });
+
+  expect(response?.ok).toBe(false);
+  if (!response || response.ok) throw new Error('expected the ambiguity refusal');
+  // Still the truth: two nodes matched and the read refuses to choose.
+  expect(response.error.code).toBe('AMBIGUOUS_MATCH');
+  expect(response.error.details?.matches).toBe(2);
+  // But nothing issuable, so nothing printable: no candidate refs, no epoch,
+  // and no hint advertising an affordance the frame cannot honor.
+  expect(response.error.details?.candidates).toBeUndefined();
+  expect(response.error.details?.refsGeneration).toBeUndefined();
+  expect(String(response.error.details?.hint)).not.toMatch(/printed candidate/);
+  // The store still describes the tree it did — the sparse capture replaced
+  // nothing — and the pre-existing complete frame from the earlier snapshot
+  // was left alone rather than reissued over a tree that was never stored.
+  expect(session.snapshot!.nodes).toBe(storedNodes);
+  expect(refFrameScope(session)).toBe('all');
+});

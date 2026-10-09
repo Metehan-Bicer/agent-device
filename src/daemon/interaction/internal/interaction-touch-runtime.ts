@@ -7,6 +7,7 @@ import type {
   ResolvedInteractionTarget,
 } from '@agent-device/contracts/interaction';
 import type { GestureReferenceFrame } from '@agent-device/contracts/scroll-gesture';
+import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { asAppError, normalizeError } from '@agent-device/kernel/errors';
 import { readResolvedInteractionTarget } from '../../../core/interaction-outcome.ts';
 import { publishAmbiguousMatchCandidateRefs } from '../../session-snapshot.ts';
@@ -70,9 +71,11 @@ export async function dispatchRuntimeInteraction<
   params = bindInteractionSession(params);
   if (!params.sessionRef) return noActiveSessionError();
   const session = params.sessionStore.requireCurrent(params.sessionRef);
+  const consumedCapture: { state?: SnapshotState } = {};
   const runtime = createInteractionRuntimeForRoute({
     ...params,
     touchExecutor: options.touchExecutor,
+    consumedCapture,
   });
   const actionStartedAt = Date.now();
   try {
@@ -124,6 +127,7 @@ export async function dispatchRuntimeInteraction<
       params.sessionRef,
       params.sessionStore,
       asAppError(error),
+      consumedCapture.state,
     );
     if (isAndroidEscapeError(appError)) throw appError;
     if (appError.code === 'AMBIGUOUS_MATCH') return appErrorResponse(appError);
