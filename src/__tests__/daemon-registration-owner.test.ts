@@ -105,9 +105,12 @@ function onWindowsHost<T>(run: () => Promise<T>): Promise<T> {
 // the Windows host rule (EPERM on an append handle, enforced here at the fs
 // seam) is answered by an `'r+'` handle instead of a create/reopen window
 // on the common path (#3291).
-test('a Windows host empties an existing log through one pinned write handle', async () => {
-  const { paths, owner } = await acquire();
-  fs.writeFileSync(paths.logPath, 'previous run\n');
+
+// Emulates the Windows host rule at the fs seam: ftruncate through an
+// append-only handle raises EPERM as NTFS would, while every other open and
+// truncate passes through. Records the flags each log open used so each test
+// can pin the exact handle sequence.
+function spyWindowsLogHandleRules(logPath: string): string[] {
   const flagsByDescriptor = new Map<number, string>();
   const logOpenFlags: string[] = [];
   const realOpen = fs.openSync;
@@ -116,7 +119,7 @@ test('a Windows host empties an existing log through one pinned write handle', a
     flags: fs.OpenMode,
     mode?: fs.Mode,
   ) => {
-    if (String(target) === paths.logPath) logOpenFlags.push(String(flags));
+    if (String(target) === logPath) logOpenFlags.push(String(flags));
     const descriptor = realOpen(target, flags, mode);
     flagsByDescriptor.set(descriptor, String(flags));
     return descriptor;
@@ -130,6 +133,13 @@ test('a Windows host empties an existing log through one pinned write handle', a
     }
     realTruncate(descriptor, len);
   }) as typeof fs.ftruncateSync);
+  return logOpenFlags;
+}
+
+test('a Windows host empties an existing log through one pinned write handle', async () => {
+  const { paths, owner } = await acquire();
+  fs.writeFileSync(paths.logPath, 'previous run\n');
+  const logOpenFlags = spyWindowsLogHandleRules(paths.logPath);
   await onWindowsHost(async () => {
     try {
       owner.publish(fields);
@@ -146,28 +156,7 @@ test('a Windows host empties an existing log through one pinned write handle', a
 
 test('a missing Windows-host log is created through append and emptied through a write handle', async () => {
   const { paths, owner } = await acquire();
-  const flagsByDescriptor = new Map<number, string>();
-  const logOpenFlags: string[] = [];
-  const realOpen = fs.openSync;
-  vi.spyOn(fs, 'openSync').mockImplementation(((
-    target: fs.PathLike,
-    flags: fs.OpenMode,
-    mode?: fs.Mode,
-  ) => {
-    if (String(target) === paths.logPath) logOpenFlags.push(String(flags));
-    const descriptor = realOpen(target, flags, mode);
-    flagsByDescriptor.set(descriptor, String(flags));
-    return descriptor;
-  }) as typeof fs.openSync);
-  const realTruncate = fs.ftruncateSync;
-  vi.spyOn(fs, 'ftruncateSync').mockImplementation(((descriptor: number, len?: number) => {
-    if (flagsByDescriptor.get(descriptor) === 'a') {
-      throw Object.assign(new Error('EPERM: operation not permitted, ftruncate'), {
-        code: 'EPERM',
-      });
-    }
-    realTruncate(descriptor, len);
-  }) as typeof fs.ftruncateSync);
+  const logOpenFlags = spyWindowsLogHandleRules(paths.logPath);
   await onWindowsHost(async () => {
     try {
       owner.publish(fields);
