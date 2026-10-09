@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import {
   isProcessAlive,
   isProcessZombie,
+  readHostProcessIdentityObservations,
   readProcessStartTime,
   type HostProcessIdentityObservation,
 } from './host-process.ts';
@@ -69,7 +70,15 @@ export function classifyOwnerLiveness(params: {
   owner: Pick<OwnerIdentity, 'pid' | 'startTime'>;
   stateDir?: string;
 }): OwnerLiveness {
-  return classifyOwnerLivenessFromObservation(params);
+  // One process-table snapshot answers the whole judgment. State and start time
+  // read as two probes double the cost of every lock-ownership poll on hosts
+  // where a probe starts a fresh process tool, and one snapshot also judges both
+  // facts at the same instant instead of stitching two separate host answers.
+  const guarded = guardOwnerPid(params.owner);
+  if (guarded) return guarded;
+  const observation =
+    readHostProcessIdentityObservations([params.owner.pid]).get(params.owner.pid) ?? null;
+  return classifyLiveOwnerFromObservation(params, observation);
 }
 
 export function classifyOwnerLivenessFromObservation(
@@ -79,22 +88,61 @@ export function classifyOwnerLivenessFromObservation(
   },
   observation?: HostProcessIdentityObservation | null,
 ): OwnerLiveness {
-  const { owner, stateDir } = params;
+  // The snapshot was taken before this call, so the guards run again here: a
+  // claim whose owner died between snapshot and judgment must read dead.
+  const guarded = guardOwnerPid(params.owner);
+  if (guarded) return guarded;
+  return classifyLiveOwnerFromObservation(params, observation);
+}
+
+/** The verdicts provable from the pid alone; undefined means the caller may probe on. */
+function guardOwnerPid(owner: Pick<OwnerIdentity, 'pid' | 'startTime'>): OwnerLiveness | undefined {
   if (!isProcessPid(owner.pid)) return 'unknown';
   if (!isProcessAlive(owner.pid)) return 'owner-process-dead';
-  if (observation !== undefined ? observation?.state.startsWith('Z') : isProcessZombie(owner.pid)) {
-    return 'owner-process-dead';
-  }
-  if (owner.startTime) {
-    const currentStartTime =
-      observation !== undefined
-        ? (observation?.startTime ?? null)
-        : readProcessStartTime(owner.pid);
-    if (currentStartTime !== null && currentStartTime !== owner.startTime) {
-      return 'owner-process-reused';
-    }
-  }
+  return undefined;
+}
+
+/** Judges an owner the caller has established as a live, valid pid; probes no liveness. */
+function classifyLiveOwnerFromObservation(
+  params: {
+    owner: Pick<OwnerIdentity, 'pid' | 'startTime'>;
+    stateDir?: string;
+  },
+  observation?: HostProcessIdentityObservation | null,
+): OwnerLiveness {
+  const { owner, stateDir } = params;
+  if (hostSaysZombie(owner, observation)) return 'owner-process-dead';
+  if (owner.startTime && provesPidReused(owner, observation)) return 'owner-process-reused';
   return stateDir ? classifyOwnerStateDirectory(stateDir) : 'live';
+}
+
+/**
+ * Whether the host calls this owner a zombie. An `undefined` observation means
+ * no snapshot was taken and the field probe answers; a `null` observation is a
+ * completed snapshot that did not list the pid, which is unknown evidence and
+ * never a zombie claim.
+ */
+function hostSaysZombie(
+  owner: Pick<OwnerIdentity, 'pid'>,
+  observation: HostProcessIdentityObservation | null | undefined,
+): boolean {
+  if (observation === undefined) return isProcessZombie(owner.pid);
+  return observation?.state.startsWith('Z') ?? false;
+}
+
+/**
+ * Whether the recorded birth time proves the pid changed hands. Only a
+ * readable current start time that differs from the record proves reuse; an
+ * `undefined` observation falls back to the field probe, and a host that did
+ * not answer is unknown evidence, never proof.
+ */
+function provesPidReused(
+  owner: Pick<OwnerIdentity, 'pid' | 'startTime'>,
+  observation: HostProcessIdentityObservation | null | undefined,
+): boolean {
+  const currentStartTime =
+    observation === undefined ? readProcessStartTime(owner.pid) : (observation?.startTime ?? null);
+  return currentStartTime !== null && currentStartTime !== owner.startTime;
 }
 
 function classifyOwnerStateDirectory(stateDir: string): OwnerLiveness {
