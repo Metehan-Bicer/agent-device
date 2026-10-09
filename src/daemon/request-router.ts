@@ -467,16 +467,29 @@ function mutuallyExclusiveRecordFlagsResponse(): DaemonResponse {
 }
 
 const FILL_ONLY_FLAGS = [
-  ['recordAs', '--record-as'],
-  ['textStdin', '--text-stdin'],
+  ['recordAs', '--record-as', 'string'],
+  ['textStdin', '--text-stdin', 'boolean'],
 ] as const;
 
 function recordingFlagsResponse(req: DaemonRequest): DaemonResponse | undefined {
   if (req.flags?.record && req.flags?.noRecord) return mutuallyExclusiveRecordFlagsResponse();
-  if (req.command === 'fill') return undefined;
+  if (req.command === 'fill') return malformedFillOnlyFlagResponse(req);
   const fillOnly = FILL_ONLY_FLAGS.find(([key]) => req.flags?.[key] !== undefined);
   if (!fillOnly) return undefined;
   return errorResponse('INVALID_ARGS', `${fillOnly[1]} is supported only by fill.`);
+}
+
+/**
+ * Both fill-only flags mark the text as sensitive, and the request boundary only checks that
+ * `flags` is an object. A marker of the wrong type is refused here instead of read as unmarked.
+ */
+function malformedFillOnlyFlagResponse(req: DaemonRequest): DaemonResponse | undefined {
+  const malformed = FILL_ONLY_FLAGS.find(([key, , type]) => {
+    const value = req.flags?.[key];
+    return value !== undefined && typeof value !== type;
+  });
+  if (!malformed) return undefined;
+  return errorResponse('INVALID_ARGS', `${malformed[1]} must be a ${malformed[2]}.`);
 }
 
 /**

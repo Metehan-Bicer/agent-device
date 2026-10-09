@@ -91,6 +91,7 @@ test('an armed --text-stdin --no-record fill returns no part of the value and re
   expect(result.ok).toBe(true);
   expect(typed).toEqual([SECRET]);
   expect(JSON.stringify(result)).not.toContain(SECRET);
+  if (result.ok) expect(result.data?.text).toBe('[REDACTED]');
   expect(sessionStore.get('web')?.actions).toEqual([]);
 });
 
@@ -106,6 +107,27 @@ test('an armed --text-stdin fill without --record-as or --no-record is refused b
   expect(typed).toEqual([]);
   expect(JSON.stringify(result)).not.toContain(SECRET);
 });
+
+test.each([
+  ['recordAs', { textStdin: undefined, recordAs: 42 }, '--record-as'],
+  ['textStdin', { textStdin: 'true' }, '--text-stdin'],
+])(
+  'a fill whose %s marker has the wrong type is refused before typing',
+  async (_name, flags, flagName) => {
+    const { response, typed } = fillWithStdinText(
+      makeSession('web', { device: WEB_DESKTOP_DEVICE }),
+      flags,
+    );
+
+    const result = await response;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('INVALID_ARGS');
+    expect(result.error.message).toContain(flagName);
+    expect(typed).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  },
+);
 
 test('a backend error that echoes the --text-stdin value does not return it', async () => {
   const { response, typed } = fillWithStdinText(
