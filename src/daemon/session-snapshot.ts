@@ -147,9 +147,9 @@ export function issueSettleRefs(
  * wraps, exactly like {@link issueSettleRefs}. The `find` refusal
  * (`buildAmbiguousMatchError`) deliberately does NOT consume this rule: it
  * predates it (#1597), prints no `refsGeneration`, and its hint routes the
- * caller to narrow the locator rather than to act on a listed candidate, so
- * it advertises no issued-ref affordance. Routing it through here would make
- * find's candidates issuable and is a separate contract change.
+ * caller to narrow the locator; unlike this rule, it does not pin the printed
+ * candidate refs to a generation. Making those refs issuable is a separate
+ * contract decision.
  *
  * The two branches are one decision, not two features:
  * - The request's consumed capture IS the session's stored tree (node
