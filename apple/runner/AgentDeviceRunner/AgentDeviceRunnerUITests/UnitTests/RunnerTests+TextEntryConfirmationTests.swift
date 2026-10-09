@@ -57,6 +57,11 @@ extension RunnerTests {
     // Its closest positive: residual fully absorbed by the embedding, where every extra is
     // punctuation the baseline cannot explain — the value is request + formatting after all.
     XCTAssertTrue(Self.textValueCompletesRequest(observed: "(555) 123-4567", request: "5551234567", baseline: "12"))
+    // Known limit, the empty-baseline "$10.00" positive's twin: a mask that keeps its template
+    // through the clear shares characters with the value it formats, and text cannot tell
+    // surviving template from failed-clear residual, so the echo reading (repair, then the same
+    // mismatch as main) stands.
+    XCTAssertFalse(Self.textValueCompletesRequest(observed: "$10.00", request: "1000", baseline: "$0.00"))
   }
 
   func testDigitCountSummaryThatMovedOffItsBaselineIsUnconfirmed() {
@@ -186,6 +191,16 @@ extension RunnerTests {
         requested: "5551234567",
         baseline: Self.otpObservation("12"),
         observed: Self.otpObservation("(555) 123-4567")
+      )
+    )
+
+    // The known limit at the wire decision: a template-retaining mask ("$0.00" survives the
+    // clear) keeps the echo reading, so this fill fails with a repair as it does on main.
+    XCTAssertNil(
+      Self.unconfirmedTextEntryEvidence(
+        requested: "1000",
+        baseline: Self.otpObservation("$0.00"),
+        observed: Self.otpObservation("$10.00")
       )
     )
 

@@ -73,7 +73,9 @@ extension RunnerTests {
   /// burst typed, so end-only insertions (`"old123456"` for `"123456"`) stay echoes. A doubled
   /// entry (`"66"` for `"6"`) leaves its surplus at the ends; a mask inserting a request
   /// character (`.` for a decimal value) falls back to the echo reading; a one-character request
-  /// has no between.
+  /// has no between. Known limit: a mask that keeps its template through the clear shares
+  /// characters with the value it formats (`"$0.00"` for `"$10.00"`), so its fill keeps the echo
+  /// reading — text cannot tell surviving template from failed-clear residual.
   static func textValueCompletesRequest(observed: String, request: String, baseline: String) -> Bool {
     guard !request.isEmpty, request != observed, request.count > 1 else {
       return false
@@ -88,7 +90,6 @@ extension RunnerTests {
       consumedOffsets.insert(observed.distance(from: observed.startIndex, to: match))
       cursor = observed.index(after: match)
     }
-    // A one-character request has no between for an insertion to sit in.
     let first = consumedOffsets.first!
     let last = consumedOffsets.last!
     var sawInteriorInsertion = false
