@@ -84,3 +84,11 @@ test('a pid outside the native range is unknown without a liveness probe', () =>
   assert.equal(mockIsProcessZombie.mock.calls.length, 0);
   assert.equal(mockReadProcessStartTime.mock.calls.length, 0);
 });
+
+test('the snapshot path probes liveness for the owner pid exactly once', () => {
+  // The guards were once duplicated across the snapshot entry and the shared
+  // judge, paying two kill(pid, 0) per poll on the very path whose single
+  // snapshot exists to stop double probing.
+  assert.equal(classifyOwnerLiveness({ owner: { pid: OWNER_PID, startTime: 'start-a' } }), 'live');
+  assert.equal(mockIsProcessAlive.mock.calls.length, 1);
+});

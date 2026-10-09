@@ -103,6 +103,30 @@ test('a failed or thrown CIM query is unknown evidence, as a failed ps is', () =
   });
 });
 
+test('the CIM row body never lets one null field raise, and pins the invariant culture', () => {
+  windowsPlatform(() => {
+    // The System Idle Process has no CreationDate. Formatting that row must
+    // print an empty stamp, not raise: a terminating error mid-pipeline exits
+    // 1 and blanks the ENTIRE snapshot, turning one odd process into unknown
+    // evidence for every pid.
+    cimAnswers(`0|0||System Idle Process\r\n4343|4321||cmd.exe\r\n${DAEMON_ROW}\r\n`);
+    const observations = readHostProcessIdentityObservations([DAEMON_PID, 4343]);
+    assert.deepEqual(observations.get(DAEMON_PID), { state: 'R', startTime: DAEMON_START });
+    assert.equal(
+      observations.get(4343),
+      undefined,
+      'a null-birth row is unknown, not a false birth',
+    );
+  });
+  const command = String(mockRunCmdSync.mock.calls[0]![1][3]);
+  assert.match(command, /if \(\$_\.CreationDate\)/, 'null birth prints empty instead of raising');
+  assert.match(
+    command,
+    /CultureInfo\]::InvariantCulture/,
+    'custom format follows the host calendar',
+  );
+});
+
 test('the Windows batch snapshot answers one observation query for every selected pid', () => {
   windowsPlatform(() => {
     cimAnswers(
@@ -161,7 +185,7 @@ test('the Windows process list parses CIM rows through the injected command runn
       runCommand: async (cmd, args, options) => {
         calls.push({ cmd, args, timeoutMs: options.timeoutMs });
         return {
-          stdout: `\uFEFF${DAEMON_ROW}\r\n0|0||\r\nnot a row\r\n`,
+          stdout: `\uFEFF0|0||System Idle Process\r\n${DAEMON_ROW}\r\n0|0||\r\nnot a row\r\n`,
           stderr: '',
           exitCode: 0,
         };

@@ -258,14 +258,22 @@ function isWindowsHostPlatform(): boolean {
   return hostPlatform() === 'win32';
 }
 
-// Rows are `pid|ppid|creation|command` with a culture-invariant UTC creation
-// stamp, so the value recorded in daemon.json compares equal on every read of
-// the same process lifetime. Newlines inside a command line are flattened so
+// Rows are `pid|ppid|creation|command`. The creation stamp is formatted with
+// the invariant culture, so the value recorded in daemon.json compares equal
+// on every read of the same process lifetime regardless of host locale. The
+// row rule is that a null field prints empty and never raises: the CIM table
+// carries rows without a CreationDate (the System Idle Process), and a
+// terminating error mid-pipeline would exit 1 and blank the whole snapshot
+// instead of that one row. Newlines inside a command line are flattened so
 // one process is one row; the command may still contain `|`, which only ever
 // lands in the final capture group.
 const WINDOWS_PROCESS_ROW_BODY =
-  " | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.ProcessId, $_.ParentProcessId," +
-  " $_.CreationDate.ToUniversalTime().ToString('yyyyMMddHHmmssfffffff')," +
+  ' | ForEach-Object {' +
+  ' $birth = if ($_.CreationDate) {' +
+  " $_.CreationDate.ToUniversalTime().ToString('yyyyMMddHHmmssfffffff'," +
+  ' [System.Globalization.CultureInfo]::InvariantCulture)' +
+  " } else { '' };" +
+  " '{0}|{1}|{2}|{3}' -f $_.ProcessId, $_.ParentProcessId, $birth," +
   String.raw` ($_.CommandLine -replace '[\r\n]+', ' ') }`;
 
 function windowsProcessQueryArgs(pids: readonly number[]): string[] {

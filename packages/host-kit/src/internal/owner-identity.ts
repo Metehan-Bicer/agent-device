@@ -74,11 +74,11 @@ export function classifyOwnerLiveness(params: {
   // read as two probes double the cost of every lock-ownership poll on hosts
   // where a probe starts a fresh process tool, and one snapshot also judges both
   // facts at the same instant instead of stitching two separate host answers.
-  if (!isProcessPid(params.owner.pid)) return 'unknown';
-  if (!isProcessAlive(params.owner.pid)) return 'owner-process-dead';
+  const guarded = guardOwnerPid(params.owner);
+  if (guarded) return guarded;
   const observation =
     readHostProcessIdentityObservations([params.owner.pid]).get(params.owner.pid) ?? null;
-  return classifyOwnerLivenessFromObservation(params, observation);
+  return classifyLiveOwnerFromObservation(params, observation);
 }
 
 export function classifyOwnerLivenessFromObservation(
@@ -88,9 +88,29 @@ export function classifyOwnerLivenessFromObservation(
   },
   observation?: HostProcessIdentityObservation | null,
 ): OwnerLiveness {
-  const { owner, stateDir } = params;
+  // The snapshot was taken before this call, so the guards run again here: a
+  // claim whose owner died between snapshot and judgment must read dead.
+  const guarded = guardOwnerPid(params.owner);
+  if (guarded) return guarded;
+  return classifyLiveOwnerFromObservation(params, observation);
+}
+
+/** The verdicts provable from the pid alone; undefined means the caller may probe on. */
+function guardOwnerPid(owner: Pick<OwnerIdentity, 'pid' | 'startTime'>): OwnerLiveness | undefined {
   if (!isProcessPid(owner.pid)) return 'unknown';
   if (!isProcessAlive(owner.pid)) return 'owner-process-dead';
+  return undefined;
+}
+
+/** Judges an owner the caller has established as a live, valid pid; probes no liveness. */
+function classifyLiveOwnerFromObservation(
+  params: {
+    owner: Pick<OwnerIdentity, 'pid' | 'startTime'>;
+    stateDir?: string;
+  },
+  observation?: HostProcessIdentityObservation | null,
+): OwnerLiveness {
+  const { owner, stateDir } = params;
   if (observation !== undefined ? observation?.state.startsWith('Z') : isProcessZombie(owner.pid)) {
     return 'owner-process-dead';
   }
