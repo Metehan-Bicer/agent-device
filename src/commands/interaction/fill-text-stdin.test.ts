@@ -29,6 +29,7 @@ test.each([
   ['surrounding spaces and inner newlines', ['  two\nlines  \n'], '  two\nlines  '],
   ['a value split across chunks', ['hun', Buffer.from('ter'), '2\n'], 'hunter2'],
   ['a multi-byte character split across chunks', [Buffer.from([0xc3]), Buffer.from([0xa7])], 'ç'],
+  ['a surrogate pair split across string chunks', ['a\uD83D', '\uDE00b'], 'a\u{1F600}b'],
 ])('reads %s', async (_name, chunks, expected) => {
   expect(await readFillTextFromStdin(pipe(...chunks))).toBe(expected);
 });
@@ -63,6 +64,18 @@ test.each([
     () => pipe('lone-surrogate-\uD800'),
     'fill_text_stdin_invalid_utf8',
     'lone-surrogate-',
+  ],
+  [
+    'a high surrogate followed by a byte chunk',
+    () => pipe('held-surrogate-\uD83D', Buffer.from('x')),
+    'fill_text_stdin_invalid_utf8',
+    'held-surrogate-',
+  ],
+  [
+    'an oversized string chunk before checking its surrogates',
+    () => pipe(`${'s3cret'.repeat(FILL_TEXT_STDIN_MAX_BYTES)}\uDC00`),
+    'fill_text_stdin_too_large',
+    's3cret',
   ],
 ])('refuses %s with a typed reason and no echoed input', async (_name, stdin, reason, input) => {
   const error = await readError(stdin());
