@@ -38,20 +38,38 @@ test('accepts input exactly at the byte limit', async () => {
   expect(await readFillTextFromStdin(pipe(text))).toBe(text);
 });
 
+test('keeps a leading byte order mark', async () => {
+  expect(await readFillTextFromStdin(pipe(Buffer.from([0xef, 0xbb, 0xbf, 0x61])))).toBe('\uFEFFa');
+});
+
 test.each([
-  ['a terminal', () => terminal(), 'fill_text_stdin_tty'],
-  ['empty input', () => pipe(), 'fill_text_stdin_empty'],
-  ['input that is only a newline', () => pipe('\n'), 'fill_text_stdin_empty'],
+  ['a terminal', () => terminal(), 'fill_text_stdin_tty', undefined],
+  ['empty input', () => pipe(), 'fill_text_stdin_empty', undefined],
+  ['input that is only a newline', () => pipe('\n'), 'fill_text_stdin_empty', undefined],
   [
     'input over the byte limit',
     () => pipe('s3cret'.repeat(FILL_TEXT_STDIN_MAX_BYTES)),
     'fill_text_stdin_too_large',
+    's3cret',
   ],
-  ['invalid UTF-8', () => pipe(Buffer.from([0x73, 0x33, 0xff])), 'fill_text_stdin_invalid_utf8'],
-])('refuses %s with a typed reason and no echoed input', async (_name, stdin, reason) => {
+  [
+    'invalid UTF-8 bytes',
+    () => pipe(Buffer.from('bad-bytes-'), Buffer.from([0xff])),
+    'fill_text_stdin_invalid_utf8',
+    'bad-bytes-',
+  ],
+  [
+    'a string chunk with a lone surrogate',
+    () => pipe('lone-surrogate-\uD800'),
+    'fill_text_stdin_invalid_utf8',
+    'lone-surrogate-',
+  ],
+])('refuses %s with a typed reason and no echoed input', async (_name, stdin, reason, input) => {
   const error = await readError(stdin());
 
   expect(error.code).toBe('INVALID_ARGS');
   expect(error.details?.reason).toBe(reason);
-  expect(JSON.stringify({ message: error.message, details: error.details })).not.toMatch(/s3cret/);
+  if (input !== undefined) {
+    expect(JSON.stringify({ message: error.message, details: error.details })).not.toContain(input);
+  }
 });

@@ -448,3 +448,14 @@ test('batch rejects a fill step that asks for stdin text before daemon dispatch'
   assert.equal(result.calls.length, 0);
   assert.match(result.stderr, /Batch step 1: fill textStdin is not supported/);
 });
+
+test('batch passes an explicit fill textStdin false through to dispatch', async () => {
+  const result = await runCliCapture([
+    'batch',
+    '--steps',
+    '[{"command":"fill","input":{"target":{"kind":"ref","ref":"@e3"},"text":"x","textStdin":false}}]',
+  ]);
+
+  assert.equal(result.calls.length, 1);
+  assert.doesNotMatch(result.stderr, /textStdin is not supported/);
+});

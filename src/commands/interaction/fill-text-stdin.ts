@@ -6,9 +6,10 @@ export const FILL_TEXT_STDIN_MAX_BYTES = 64 * 1024;
 type StdinSource = AsyncIterable<Uint8Array | string> & { isTTY?: boolean };
 
 /**
- * Reads the `fill --text-stdin` value. Exactly one trailing `\n` or `\r\n` is removed so
- * `echo "$X"` and `printf '%s' "$X"` send the same text; all other whitespace is kept.
- * The value may be a secret: no error raised here includes any of the bytes read.
+ * Reads the `fill --text-stdin` value. Exactly one trailing `\n` or `\r\n` is removed so a value
+ * piped with or without a final newline sends the same text; all other whitespace, including a
+ * leading byte order mark, is kept. The value may be a secret: no error raised here includes any
+ * of the bytes read.
  */
 export async function readFillTextFromStdin(stdin: StdinSource): Promise<string> {
   if (stdin.isTTY) {
@@ -24,7 +25,7 @@ export async function readFillTextFromStdin(stdin: StdinSource): Promise<string>
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
   for await (const chunk of stdin) {
-    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+    const bytes = typeof chunk === 'string' ? encodeWellFormed(chunk) : chunk;
     byteLength += bytes.byteLength;
     if (byteLength > FILL_TEXT_STDIN_MAX_BYTES) {
       throw new AppError(
@@ -45,14 +46,26 @@ export async function readFillTextFromStdin(stdin: StdinSource): Promise<string>
   return text;
 }
 
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** `Buffer.from` would turn a lone surrogate into U+FFFD; refuse it like an invalid byte. */
+function encodeWellFormed(chunk: string): Uint8Array {
+  if (LONE_SURROGATE.test(chunk)) throw invalidUtf8Error();
+  return Buffer.from(chunk, 'utf8');
+}
+
 function decodeUtf8(bytes: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw new AppError('INVALID_ARGS', 'fill --text-stdin input is not valid UTF-8.', {
-      reason: 'fill_text_stdin_invalid_utf8',
-    });
+    throw invalidUtf8Error();
   }
+}
+
+function invalidUtf8Error(): AppError {
+  return new AppError('INVALID_ARGS', 'fill --text-stdin input is not valid UTF-8.', {
+    reason: 'fill_text_stdin_invalid_utf8',
+  });
 }
 
 function stripOneTrailingNewline(text: string): string {

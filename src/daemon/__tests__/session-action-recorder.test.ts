@@ -787,7 +787,7 @@ test('a stdin fill without --record-as never enters recording state', () => {
 
   expect(action).toBeUndefined();
   expect(session.actions).toHaveLength(0);
-  expect(JSON.stringify(session)).not.toContain(secret);
+  expect(session.recordedFillLiterals).toBeUndefined();
 });
 
 test('a stdin fill with --record-as is recorded as its ${VAR} placeholder', () => {

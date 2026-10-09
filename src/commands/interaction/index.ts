@@ -426,7 +426,7 @@ const interactionCliSchemas = {
   },
   fill: {
     usageOverride:
-      'fill <x> <y> <text> | fill <@ref|selector> <text> | fill <x> <y>|<@ref|selector> --text-stdin',
+      'fill <x> <y> <text> | fill <@ref|selector> <text> | fill <x y|@ref|selector> --text-stdin',
     usageFlags: [],
     positionalArgs: ['targetOrX', 'yOrText', 'text?'],
     allowsExtraPositionals: true,

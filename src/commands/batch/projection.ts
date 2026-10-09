@@ -82,7 +82,7 @@ function assertNoStdinFillStep(
   input: CommandInput,
   stepNumber: number,
 ): void {
-  if (command !== PUBLIC_COMMANDS.fill || input.textStdin === undefined) return;
+  if (command !== PUBLIC_COMMANDS.fill || input.textStdin !== true) return;
   throw new AppError(
     'INVALID_ARGS',
     `Batch step ${stepNumber}: fill textStdin is not supported because batch steps have no stdin of their own. Run that fill on its own with --text-stdin.`,

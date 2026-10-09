@@ -83,6 +83,21 @@ test('fill --text-stdin reads only the target and leaves the text to stdin', () 
   }
 });
 
+test('fill --text-stdin refuses an unreadable target without echoing it', () => {
+  for (const positionals of [['stray-secret'], ['e3stray'], ['stray secret words']]) {
+    let caught: unknown;
+    try {
+      interactionCliReaders.fill(positionals, { ...BASE_FLAGS, textStdin: true });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught, positionals.join(' ')).toBeInstanceOf(AppError);
+    const error = caught as AppError;
+    expect(error.details?.reason).toBe('fill_text_stdin_target_invalid');
+    expect(JSON.stringify({ message: error.message, details: error.details })).not.toMatch(/stray/);
+  }
+});
+
 test('fill --text-stdin refuses a text argument without echoing it', () => {
   for (const positionals of [
     ['@e57', 'argv-secret'],
