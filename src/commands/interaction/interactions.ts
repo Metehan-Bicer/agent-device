@@ -85,6 +85,17 @@ export const interactionCliReaders = {
   }),
   fill: (positionals, flags) => {
     const decoded = readFillTargetFromPositionals(positionals);
+    if (flags.textStdin && decoded.text !== undefined) {
+      // The message names neither source: the positional may already be the secret.
+      throw new AppError(
+        'INVALID_ARGS',
+        'fill --text-stdin reads the text from stdin, so it cannot also take a text argument.',
+        {
+          reason: 'fill_text_source_conflict',
+          hint: 'Pass only the target, for example: printf %s "$PASSWORD" | agent-device fill @e3 --text-stdin. Quote a multi-word selector so no part of it is read as text.',
+        },
+      );
+    }
     return {
       ...commonInputFromFlags(flags),
       ...selectorSnapshotInputFromFlags(flags),
@@ -92,6 +103,7 @@ export const interactionCliReaders = {
       text: decoded.text,
       delayMs: flags.delayMs,
       recordAs: flags.recordAs,
+      textStdin: flags.textStdin,
       verify: flags.verify,
     };
   },

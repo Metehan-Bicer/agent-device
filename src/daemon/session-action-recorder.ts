@@ -59,6 +59,8 @@ export function recordActionEntry(
   entry: RecordActionEntry,
 ): SessionAction | undefined {
   if (entry.flags?.noRecord) return undefined;
+  // Stdin text stays out of session actions unless `--record-as` parameterizes it.
+  if (entry.flags?.textStdin === true && entry.flags.recordAs === undefined) return undefined;
   if (isExcludedRepairSegmentObservation(session, entry)) return undefined;
   if (entry.flags) applyRecordedSaveScriptFlags(session, entry.flags);
   const fillLiteral = readRecordedFillLiteral(entry);

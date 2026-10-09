@@ -465,12 +465,17 @@ function mutuallyExclusiveRecordFlagsResponse(): DaemonResponse {
   );
 }
 
+const FILL_ONLY_FLAGS = [
+  ['recordAs', '--record-as'],
+  ['textStdin', '--text-stdin'],
+] as const;
+
 function recordingFlagsResponse(req: DaemonRequest): DaemonResponse | undefined {
   if (req.flags?.record && req.flags?.noRecord) return mutuallyExclusiveRecordFlagsResponse();
-  if (req.flags?.recordAs !== undefined && req.command !== 'fill') {
-    return errorResponse('INVALID_ARGS', '--record-as is supported only by fill.');
-  }
-  return undefined;
+  if (req.command === 'fill') return undefined;
+  const fillOnly = FILL_ONLY_FLAGS.find(([key]) => req.flags?.[key] !== undefined);
+  if (!fillOnly) return undefined;
+  return errorResponse('INVALID_ARGS', `${fillOnly[1]} is supported only by fill.`);
 }
 
 /**
@@ -493,7 +498,8 @@ function customActionFlagsResponse(req: DaemonRequest): DaemonResponse | undefin
 }
 
 function registerParameterizedFillDiagnosticValue(req: DaemonRequest): void {
-  if (req.command !== 'fill' || typeof req.flags?.recordAs !== 'string') return;
+  if (req.command !== 'fill') return;
+  if (typeof req.flags?.recordAs !== 'string' && req.flags?.textStdin !== true) return;
   registerDiagnosticSensitiveValue(
     inferFillText({
       ts: 0,
