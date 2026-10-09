@@ -59,6 +59,11 @@ test.each([
     { host: '::1', port: 8081, scheme: 'http' as const },
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8081',
   ],
+  [
+    'an already-bracketed IPv6 host',
+    { host: '[::1]', port: 8081, scheme: 'http' as const },
+    'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8081',
+  ],
 ])('builds the dev-client launch URL for %s', (_name, transport, expected) => {
   expect(buildExpoDevClientLaunchUrl('exp+dev-slug', transport)).toBe(expected);
 });
@@ -84,6 +89,17 @@ test('points at the server origin of a bundle URL, not at the bundle itself', as
 
   await expect(resolveExpoDevClientLaunchUrl(SIMULATOR, input)).resolves.toBe(
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F10.0.0.5%3A8090',
+  );
+});
+
+test('keeps a single pair of brackets around an IPv6 bundle URL host', async () => {
+  resolveScheme.mockResolvedValue('exp+dev-slug');
+  const input = openInput({
+    runtimeHints: { bundleUrl: 'http://[::1]:8090/index.bundle?platform=ios' },
+  });
+
+  await expect(resolveExpoDevClientLaunchUrl(SIMULATOR, input)).resolves.toBe(
+    'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8090',
   );
 });
 

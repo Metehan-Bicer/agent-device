@@ -45,7 +45,11 @@ export function buildExpoDevClientLaunchUrl(
   scheme: string,
   transport: ResolvedRuntimeTransport,
 ): string {
-  const host = transport.host.includes(':') ? `[${transport.host}]` : transport.host;
+  // `URL.hostname` keeps an IPv6 host bracketed, and so may a `--metro-host`; bracket only a bare one.
+  const host =
+    transport.host.includes(':') && !transport.host.startsWith('[')
+      ? `[${transport.host}]`
+      : transport.host;
   const serverUrl = `${transport.scheme}://${host}:${transport.port}`;
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(serverUrl)}`;
 }
