@@ -1,11 +1,7 @@
 import { AppError, discloseDispatch } from '@agent-device/kernel/errors';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { inheritPostGestureOutcome } from '@agent-device/kernel/snapshot';
-import {
-  formatSelectorFailure,
-  selectorFailureHint,
-  type SelectorResolution,
-} from '@agent-device/selectors';
+import type { SelectorResolution } from '@agent-device/selectors';
 import { resolveSelectorPipeline } from '@agent-device/selectors/selector-pipeline';
 import {
   SELECTOR_PIPELINE_POLICIES,
@@ -22,6 +18,7 @@ import {
 } from './interaction-snapshot-capture.ts';
 import { buildCoveredInteractionError } from './target-visibility-stages.ts';
 import { resolveActionSelector } from './selector-action-resolution.ts';
+import { selectorNotFoundFailure } from './selector-read-shared.ts';
 import type {
   InteractionAction,
   ResolveInteractionTargetParams,
@@ -145,18 +142,11 @@ export async function selectorInteractionFailure(params: {
   const { runtime, nodes, selectorExpression, action, resolved } = params;
   const covered = await detectCoveredSelectorTarget({ runtime, nodes, selectorExpression, action });
   if (covered) return covered;
-  const diagnostics = resolved?.diagnostics ?? [];
-  return discloseDispatch(
-    new AppError(
-      'COMMAND_FAILED',
-      formatSelectorFailure(selectorExpression, diagnostics, { unique: true }),
-      {
-        reason: INTERACTION_ERROR_REASONS.selectorNotFound,
-        hint: selectorFailureHint(diagnostics),
-      },
-    ),
-    'no',
-  );
+  return selectorNotFoundFailure(selectorExpression, {
+    diagnostics: resolved?.diagnostics ?? [],
+    unique: true,
+    dispatched: 'no',
+  });
 }
 
 /**

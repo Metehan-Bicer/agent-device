@@ -145,6 +145,96 @@ function resolveUnverifiedWrapperControlWithIndex(
     : null;
 }
 
+/**
+ * The mirror half of the RN pair is not a view the app authored: it is the
+ * synthetic element the platform reports for the reporter's accessibility
+ * subtree, and it carries that reportage in its role/subrole
+ * (`RCTAccessibilityElement` / `UIAccessibilityElement`, measured live via
+ * `snapshot --raw`). Requiring it on every non-reporter candidate is what
+ * distinguishes "one element the platform reported twice" from "two authored
+ * elements that happen to share a label and a frame" — geometry cannot tell
+ * those apart, only the reportage can. An authored child (a nested `<Text>`
+ * styled to the same label at the same place, a `<View>` carrying the same
+ * accessibilityLabel) has view-backed role/subrole and keeps the refusal.
+ */
+function isReportedAccessibilityElement(node: SnapshotNode): boolean {
+  const roles = [node.type, node.role, node.subrole].map((value) => normalizeType(value ?? ''));
+  return roles.some((role) => role.includes('accessibilityelement'));
+}
+
+/**
+ * The React Native text shape, captured live from the fixture Catalog screen: a
+ * `RCTParagraphComponentView` reporting the accessibility label (and the app's
+ * `testID`) with its own `RCTAccessibilityElement` child repeating the identical
+ * label at the identical rect. React Native exposes one authored `<Text>` this way,
+ * so every label selector on RN text answers twice and the uniqueness rows would
+ * refuse a line of text that is plainly on screen.
+ *
+ * The pair denotes one element, and the surviving one is the OUTER reporter: it
+ * carries the identifier the app authored, it is the node the first-match rows
+ * already answer with, and it is the node the interactive snapshot publishes —
+ * `collectIosRepeatedStaticSuppression` keeps the outer reporter and suppresses the
+ * mirror, which is why `snapshot -i` has always listed that line once while a
+ * regular capture listed it twice. After the collapse, a read names the row an
+ * interactive snapshot showed.
+ *
+ * Narrowest rule, and every clause is evidence rather than convenience:
+ * - one ancestry chain — matches in distinct subtrees stay ambiguous;
+ * - identical non-empty labels and rects agreeing within wrapper slack — a nested
+ *   `<Text>` that repeats a word at its own position is a second run of text, not
+ *   a mirror, and a distinct rect proves it;
+ * - every non-reporter candidate is a reported accessibility element (above) —
+ *   same label AND same frame is exactly the case where geometry cannot
+ *   distinguish a mirror from a second authored element, so the reportage is
+ *   required and an authored same-frame child stays ambiguous;
+ * - no candidate is a semantic touch target — a button labelled like its own static
+ *   text is two roles the caller still has to choose between (that shape is the
+ *   wrapper rule above's job, through the hittability door it keeps);
+ * - unlike the wrapper rule, candidates MAY carry hittability facts: the platform
+ * *does* report them for this pair, which is exactly why the wrapper rule declines
+ *   it and this one exists.
+ */
+function resolveTextEchoReporterWithIndex(
+  candidates: readonly SnapshotNode[],
+  index: ActionableTouchIndex,
+): SnapshotNode | null {
+  if (candidates.length < 2) return null;
+  if (!candidatesFormSingleAncestryChain(candidates, index.nodesByIndex)) return null;
+  if (candidates.some((candidate) => isSemanticTouchTarget(candidate))) return null;
+  const reporter = candidates.reduce((outermost, candidate) =>
+    (candidate.depth ?? 0) < (outermost.depth ?? 0) ? candidate : outermost,
+  );
+  const reporterLabel = reporter.label?.trim();
+  if (!reporterLabel) return null;
+  const reporterRect = normalizeRect(reporter.rect);
+  if (!reporterRect) return null;
+  const mirrorsOneReporter = candidates.every(
+    (candidate) =>
+      (candidate === reporter || isReportedAccessibilityElement(candidate)) &&
+      candidate.label?.trim() === reporterLabel &&
+      agreesWithinWrapperSlack(normalizeRect(candidate.rect), reporterRect),
+  );
+  return mirrorsOneReporter ? reporter : null;
+}
+
+/**
+ * The structural rules that recognize a refused candidate set as ONE element the
+ * platform reported twice, and name the node it should resolve to: a control under
+ * its own accessibility wrapper, or an authored text reporter and its accessibility
+ * mirror. Both the read door and the replay verification gate consume this, so a
+ * screen cannot resolve one way live and another way under replay.
+ */
+export function resolveElementReportedTwice(
+  nodes: SnapshotNode[],
+  candidates: readonly SnapshotNode[],
+): SnapshotNode | null {
+  const index = buildActionableTouchIndex(nodes);
+  return (
+    resolveUnverifiedWrapperControlWithIndex(candidates, index) ??
+    resolveTextEchoReporterWithIndex(candidates, index)
+  );
+}
+
 function agreesWithinWrapperSlack(rect: Rect | null, controlRect: Rect): boolean {
   if (!rect) return false;
   return (

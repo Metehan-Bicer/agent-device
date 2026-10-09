@@ -261,3 +261,188 @@ export const UNVERIFIED_HITTABILITY_WRAPPER_CHAIN_NODES: RawSnapshotNode[] = [
     rect: { x: 0, y: 0, width: 393, height: 852 },
   },
 ];
+
+/**
+ * React Native text as an iOS regular snapshot reports it (#2870), captured live
+ * from the fixture app's Catalog screen: the paragraph view carries the label and
+ * the app's own `testID`, and its `RCTAccessibilityElement` child mirrors the
+ * identical label at the identical rect. Both nodes carry a `hittable` fact, which
+ * is why the hittability-door wrapper rule above declines this pair and the
+ * text-echo rule exists. The pair denotes one authored `<Text>`, and the reporter
+ * is the outer node — the one whose `identifier` an `id=` selector targets.
+ */
+export const RN_TEXT_ECHO_NODES: RawSnapshotNode[] = [
+  {
+    index: 0,
+    depth: 2,
+    parentIndex: 2,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    identifier: 'catalog-scroll-state',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 1,
+    depth: 3,
+    parentIndex: 0,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTAccessibilityElement',
+    subrole: 'UIAccessibilityElement',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 2,
+    depth: 1,
+    parentIndex: 3,
+    type: 'XCUIElementTypeOther',
+    rect: { x: 0, y: 0, width: 386, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 3,
+    depth: 0,
+    type: 'XCUIElementTypeApplication',
+    label: 'Agent Device Tester',
+    rect: { x: 0, y: 0, width: 386, height: 678 },
+    enabled: true,
+    hittable: false,
+  },
+];
+
+/**
+ * The closest negative to the text echo: two nodes carrying the same label at the
+ * same rect in DIFFERENT subtrees. Identical label, rect, and role vocabulary —
+ * only the ancestry separates them from the pair above, so this is what proves the
+ * collapse reads structure rather than the description a match shares.
+ */
+export const RN_TEXT_ECHO_DISTINCT_SUBTREE_NODES: RawSnapshotNode[] = [
+  {
+    index: 0,
+    depth: 1,
+    parentIndex: 2,
+    type: 'XCUIElementTypeStaticText',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 1,
+    depth: 1,
+    parentIndex: 3,
+    type: 'XCUIElementTypeStaticText',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 2,
+    depth: 0,
+    type: 'XCUIElementTypeOther',
+    rect: { x: 0, y: 0, width: 193, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 3,
+    depth: 0,
+    type: 'XCUIElementTypeOther',
+    rect: { x: 193, y: 0, width: 193, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+];
+
+/**
+ * The other closest negative: one ancestry chain whose descendant repeats the
+ * ancestor's label at a DIFFERENT rect — two runs of the same words, which is two
+ * elements the caller still has to choose between. Roles mirror the live RN pair
+ * so the rect is the ONLY fact that differs from the collapsing positive.
+ */
+export const RN_TEXT_ECHO_OFFSET_RECT_NODES: RawSnapshotNode[] = [
+  {
+    index: 0,
+    depth: 1,
+    parentIndex: 2,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 1,
+    depth: 2,
+    parentIndex: 0,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTAccessibilityElement',
+    subrole: 'UIAccessibilityElement',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 420, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 2,
+    depth: 0,
+    type: 'XCUIElementTypeApplication',
+    rect: { x: 0, y: 0, width: 386, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+];
+
+/**
+ * The reportage negative: one ancestry chain with the identical label at the
+ * identical rect — the shape geometry cannot distinguish — where the descendant
+ * is an AUTHORED element (a nested `<Text>` or a `<View>` carrying the same
+ * accessibilityLabel, view-backed role/subrole), not the accessibility element
+ * the platform reports for the reporter. Same frame, same label, two authored
+ * elements: the collapse rule's `isReportedAccessibilityElement` clause keeps
+ * this ambiguous.
+ */
+export const RN_TEXT_ECHO_AUTHORED_CHILD_NODES: RawSnapshotNode[] = [
+  {
+    index: 0,
+    depth: 1,
+    parentIndex: 2,
+    type: 'XCUIElementTypeStaticText',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 1,
+    depth: 2,
+    parentIndex: 0,
+    type: 'RCTParagraphComponentView',
+    role: 'RCTParagraphComponentView',
+    subrole: 'UIView',
+    label: 'Catalog scroll: top',
+    rect: { x: 18, y: 168, width: 350, height: 17 },
+    enabled: true,
+    hittable: true,
+  },
+  {
+    index: 2,
+    depth: 0,
+    type: 'XCUIElementTypeApplication',
+    rect: { x: 0, y: 0, width: 386, height: 678 },
+    enabled: true,
+    hittable: true,
+  },
+];

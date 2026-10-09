@@ -7,6 +7,9 @@ import {
   createFakeClock,
   createSelectorDevice,
   observationStagesSnapshot,
+  rnTextEchoDistinctSubtreeReadSnapshot,
+  rnTextEchoOffsetRectReadSnapshot,
+  rnTextEchoReadSnapshot,
   skippedAlternativeSelectorSnapshot,
   unverifiedWrapperChainReadSnapshot,
 } from './test-utils/index.ts';
@@ -43,7 +46,7 @@ test('get text disambiguates an ambiguous selector (readText row)', async () => 
   assert.equal(`@${result.node.ref}`, DISAMBIGUATED_REF);
 });
 
-test('get attrs fails closed on the same ambiguous selector (readUnique row)', async () => {
+test('get attrs reports the ambiguity it refuses as an ambiguity, not an absence (readUnique row)', async () => {
   const device = createSelectorDevice(ambiguousSelectorReadSnapshot());
 
   const error = await device.selectors
@@ -54,10 +57,13 @@ test('get attrs fails closed on the same ambiguous selector (readUnique row)', a
     );
 
   assert.ok(error instanceof AppError, 'get attrs must refuse rather than guess a duplicate');
-  assert.equal(error.code, 'COMMAND_FAILED');
+  // Dispatch is on the code the acting refusal already uses, plus the match
+  // count — no new reason vocabulary (#2870 review).
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  assert.equal((error.details as { matches?: number } | undefined)?.matches, 2);
 });
 
-test('is fails closed on the same ambiguous selector (readUnique row)', async () => {
+test('is reports the ambiguity it refuses as an ambiguity, not an absence (readUnique row)', async () => {
   const device = createSelectorDevice(ambiguousSelectorReadSnapshot());
 
   const error = await device.selectors
@@ -68,8 +74,152 @@ test('is fails closed on the same ambiguous selector (readUnique row)', async ()
     );
 
   assert.ok(error instanceof AppError, 'is must refuse rather than answer about one duplicate');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  const details = error.details as { matches?: number; candidates?: string[] } | undefined;
+  // The count is the whole point of the outcome (#2870): an agent narrows a
+  // selector it knows matched twice without another snapshot round trip.
+  assert.equal(details?.matches, 2);
+  assert.deepEqual(details?.candidates, ['@e2 [button] "Save"', '@e3 [button] "Save"']);
+});
+
+/**
+ * Both rows share one door, so `details.selector` must name the MATCHED
+ * alternative for both, never the caller's authored expression. `is` passes
+ * its authored selector among its details; a spread order that let caller
+ * details win would make `is` report the whole expression while `get attrs`
+ * reported the alternative — same door, two shapes (#2870 review).
+ */
+test('both strict rows report the matched alternative as details.selector, not the authored expression', async () => {
+  const AUTHORED = 'label="Nowhere" || label="Save"';
+  const device = createSelectorDevice(ambiguousSelectorReadSnapshot());
+
+  const errors = await Promise.all([
+    device.selectors.is({ session: 'default', predicate: 'visible', selector: AUTHORED }).then(
+      () => null,
+      (error: unknown) => error as AppError,
+    ),
+    device.selectors.getAttrs(selector(AUTHORED), { session: 'default' }).then(
+      () => null,
+      (error: unknown) => error as AppError,
+    ),
+  ]);
+
+  for (const error of errors) {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.code, 'AMBIGUOUS_MATCH');
+    assert.equal(
+      (error.details as { selector?: string } | undefined)?.selector,
+      'label="Save"',
+      'details.selector names the alternative that matched twice',
+    );
+  }
+});
+
+/**
+ * The closest negative to the pair above: a selector that matches NOTHING still
+ * reports proof of absence. The two failures carry different typed reasons and
+ * codes, so no consumer can read "not on screen" from a message it shares with an
+ * ambiguity.
+ */
+test('a read with no match at all still reports selector_not_found', async () => {
+  const device = createSelectorDevice(ambiguousSelectorReadSnapshot());
+
+  const error = await device.selectors
+    .is({ session: 'default', predicate: 'visible', selector: 'label="Nowhere"' })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof AppError);
   assert.equal(error.code, 'COMMAND_FAILED');
-  assert.equal((error.details as { reason?: string } | undefined)?.reason, 'selector_not_found');
+  const details = error.details as {
+    reason?: string;
+    matches?: unknown;
+    candidates?: unknown;
+    dispatched?: unknown;
+  };
+  assert.equal(details.reason, 'selector_not_found');
+  // The absence outcome carries no match count and no candidate list: an
+  // ambiguity-shaped field on a zero-match failure would let a consumer
+  // reconstruct the flattened outcome the fix removed.
+  assert.equal(details.matches, undefined);
+  assert.equal(details.candidates, undefined);
+  // And no dispatch disclosure: the shared not-found builder threads
+  // `dispatched` as a parameter because the acting route proves 'no' and
+  // this route proves nothing about reaching the device (selector-readiness
+  // pins its side).
+  assert.equal(details.dispatched, undefined);
+});
+
+/**
+ * #2870: React Native reports one authored `<Text>` as a paragraph view plus an
+ * accessibility-element child carrying the identical label at the identical rect.
+ * That is one line of text, and the read that names one element answers about its
+ * reporter instead of refusing -- the node `snapshot -i` lists, and the node whose
+ * testID an `id=` selector targets.
+ */
+const RN_TEXT_SELECTOR = 'label="Catalog scroll: top"';
+/** The paragraph view, not the accessibility element mirroring it. */
+const RN_TEXT_REPORTER_REF = '@e1';
+
+test('is visible answers about React Native text reported twice (readUnique row)', async () => {
+  const device = createSelectorDevice(rnTextEchoReadSnapshot());
+
+  const result = await device.selectors.is({
+    session: 'default',
+    predicate: 'visible',
+    selector: RN_TEXT_SELECTOR,
+  });
+
+  assert.equal(result.pass, true);
+  assert.equal(`@${result.node?.ref}`, RN_TEXT_REPORTER_REF);
+});
+
+test('get attrs answers about React Native text reported twice (readUnique row)', async () => {
+  const device = createSelectorDevice(rnTextEchoReadSnapshot());
+
+  const attrs = await device.selectors.getAttrs(selector(RN_TEXT_SELECTOR), {
+    session: 'default',
+  });
+
+  assert.equal(`@${attrs.node.ref}`, RN_TEXT_REPORTER_REF);
+  // The collapse keeps the identifier the app authored on the reporter.
+  assert.equal(attrs.node.identifier, 'catalog-scroll-state');
+});
+
+test('the same label in two subtrees is still an ambiguity, not a collapse (#2870)', async () => {
+  const device = createSelectorDevice(rnTextEchoDistinctSubtreeReadSnapshot());
+
+  const error = await device.selectors
+    .is({ session: 'default', predicate: 'visible', selector: RN_TEXT_SELECTOR })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof AppError, 'distinct subtrees are two elements, not a mirror');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+});
+
+/**
+ * The rect negative to the RN collapse above, at the command surface: identical
+ * label on a parent/child pair whose rects differ by more than wrapper slack is
+ * a second run of text at its own position, so the strict read keeps refusing.
+ */
+test('the same label mirrored at an offset rect stays an ambiguity (#2870)', async () => {
+  const device = createSelectorDevice(rnTextEchoOffsetRectReadSnapshot());
+
+  const error = await device.selectors
+    .is({ session: 'default', predicate: 'visible', selector: RN_TEXT_SELECTOR })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  assert.ok(error instanceof AppError, 'a distinct rect is a second run of text, not a mirror');
+  assert.equal(error.code, 'AMBIGUOUS_MATCH');
+  assert.equal((error.details as { matches?: number } | undefined)?.matches, 2);
 });
 
 /**

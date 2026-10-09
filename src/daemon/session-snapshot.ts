@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type { SettleObservation } from '@agent-device/contracts/interaction';
+import { readElementMatchCandidateRefs, AppError } from '@agent-device/kernel/errors';
 import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { activatePartialRefFrame, refFrameEpoch, refFrameState } from './ref-frame.ts';
 import type { SessionRef, SessionState } from './session-state.ts';
@@ -134,6 +135,85 @@ export function issueSettleRefs(
   if (!session) return undefined;
   markSessionPartialRefsIssued(session, collectSettleIssuedRefBodies(settle));
   return session.snapshotGeneration;
+}
+
+/**
+ * ADR 0014's issuance rule for ambiguity refusals: a response that prints
+ * candidate `@ref`s must be able to ISSUE them, and issuance is only ever
+ * valid against the tree the session's generation describes. Every route
+ * that can answer `AMBIGUOUS_MATCH` with candidates runs its error through
+ * here — the acting touch runtime (`press`/`click`/`fill`) and the strict-read
+ * dispatches (`is`, `get attrs`) — so the rule has
+ * one implementation beside the partial-frame primitive it wraps, exactly
+ * like {@link issueSettleRefs}.
+ *
+ * The two branches are one decision, not two features:
+ * - The request's consumed capture IS the session's stored tree (node
+ *   identity: `setSessionSnapshot` stores the capture the request took, and
+ *   the sparse-quality skip in `updateSessionSnapshot` is exactly what
+ *   breaks that identity). The candidate bodies become a PARTIAL frame over
+ *   it and the frame's epoch rides back as `refsGeneration`, so a printed
+ *   ref drives the next command against the very tree that listed it.
+ * - Anything else — a sparse capture that was never stored (the
+ *   {@link issueSettleRefs} precedent: what was not stored issues nothing),
+ *   a retired or absent session, or a session with no generation to freeze
+ *   — issues nothing, and so may print nothing: the candidate list is
+ *   stripped to a count-only refusal with a hint that cannot advertise an
+ *   unusable affordance. Printing refs the frame cannot honor routes users
+ *   into a wrong-node bind against the PREVIOUS stored tree, which is worse
+ *   than no list at all (#2870 review).
+ *
+ * A non-ambiguity error, or one that already lists no candidate refs, is
+ * returned untouched.
+ */
+export function publishAmbiguousMatchCandidateRefs(
+  ref: SessionRef | undefined,
+  sessionStore: SessionStore,
+  error: AppError,
+  consumedCapture: SnapshotState | undefined,
+): AppError {
+  if (error.code !== 'AMBIGUOUS_MATCH') return error;
+  const refs = readElementMatchCandidateRefs(error.details);
+  if (refs.length === 0) return error;
+  const session = ref ? sessionStore.resolveCurrent(ref) : undefined;
+  if (
+    session?.snapshot &&
+    session.snapshotGeneration !== undefined &&
+    consumedCapture !== undefined &&
+    // Node identity, not object identity: the capture travels through the
+    // command layer, which stores an annotation copy of the same node array.
+    consumedCapture.nodes === session.snapshot.nodes
+  ) {
+    markSessionPartialRefsIssued(session, refs);
+    return new AppError(
+      error.code,
+      error.message,
+      { ...error.details, refsGeneration: session.snapshotGeneration },
+      error.cause,
+    );
+  }
+  return ambiguityCountOnlyFailure(error);
+}
+
+/**
+ * The count-only form of an ambiguity refusal whose candidates could not be
+ * issued: the message keeps the truthful `matches` count, and the hint drops
+ * the "act on a printed candidate" route because there is no frame that
+ * would honor one. Keyed on the typed issuance decision above, never on
+ * error text.
+ */
+function ambiguityCountOnlyFailure(error: AppError): AppError {
+  const {
+    candidates: _candidates,
+    refsGeneration: _refsGeneration,
+    ...details
+  } = error.details ?? {};
+  return new AppError(
+    error.code,
+    error.message,
+    { ...details, hint: 'Narrow the selector with role/id/longer text and retry.' },
+    error.cause,
+  );
 }
 
 /** The reusable refs a settled diff exposed: added diff lines, `refs`, `tail`. */

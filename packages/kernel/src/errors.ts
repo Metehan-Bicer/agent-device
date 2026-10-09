@@ -161,6 +161,13 @@ export type NormalizedError = {
   details?: ErrorWireDetails;
 };
 
+/**
+ * The `matches`/`candidates` pair an `AMBIGUOUS_MATCH` producer puts on the
+ * wire. The cap on `candidates` is owned by the one builder that fills this
+ * shape (`elementMatchCandidateDetails` in capture-kit's line renderer), and
+ * `readErrorCandidateViews` computes the "+N more" marker from
+ * `matches - candidates.length`, so no consumer needs the constant itself.
+ */
 export type ElementMatchCandidateDetails = {
   candidates: string[];
   matches: number;

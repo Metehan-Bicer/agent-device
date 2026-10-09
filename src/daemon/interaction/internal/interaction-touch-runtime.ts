@@ -7,13 +7,13 @@ import type {
   ResolvedInteractionTarget,
 } from '@agent-device/contracts/interaction';
 import type { GestureReferenceFrame } from '@agent-device/contracts/scroll-gesture';
+import type { SnapshotState } from '@agent-device/kernel/snapshot';
 import { asAppError, normalizeError } from '@agent-device/kernel/errors';
 import { readResolvedInteractionTarget } from '../../../core/interaction-outcome.ts';
-import { markSessionPartialRefsIssued } from '../../session-snapshot.ts';
+import { publishAmbiguousMatchCandidateRefs } from '../../session-snapshot.ts';
 import { isSessionRecording } from '../../session-script-publication-capability.ts';
 import type { DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
-import { publishInteractionAmbiguityCandidates } from './interaction-ambiguity-publication.ts';
 import {
   createInteractionRuntimeForRoute,
   finalizeTouchInteraction,
@@ -71,9 +71,11 @@ export async function dispatchRuntimeInteraction<
   params = bindInteractionSession(params);
   if (!params.sessionRef) return noActiveSessionError();
   const session = params.sessionStore.requireCurrent(params.sessionRef);
+  const consumedCapture: { state?: SnapshotState } = {};
   const runtime = createInteractionRuntimeForRoute({
     ...params,
     touchExecutor: options.touchExecutor,
+    consumedCapture,
   });
   const actionStartedAt = Date.now();
   try {
@@ -121,11 +123,12 @@ export async function dispatchRuntimeInteraction<
       androidFreshnessBaseline: options.androidFreshnessBaseline,
     });
   } catch (error) {
-    const appError = publishInteractionAmbiguityCandidates({
-      error: asAppError(error),
-      snapshotGeneration: session.snapshotGeneration,
-      publishPartialRefs: (refs) => markSessionPartialRefsIssued(session, refs),
-    });
+    const appError = publishAmbiguousMatchCandidateRefs(
+      params.sessionRef,
+      params.sessionStore,
+      asAppError(error),
+      consumedCapture.state,
+    );
     if (isAndroidEscapeError(appError)) throw appError;
     if (appError.code === 'AMBIGUOUS_MATCH') return appErrorResponse(appError);
     const corroboratedResponse = await buildRuntimeIosCorroboratedResponse({

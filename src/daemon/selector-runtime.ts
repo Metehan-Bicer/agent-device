@@ -1,9 +1,15 @@
 import { asAppError } from '@agent-device/kernel/errors';
-import type { SnapshotNode } from '@agent-device/kernel/snapshot';
+import type { SnapshotNode, SnapshotState } from '@agent-device/kernel/snapshot';
 import { absenceCaptureOptionError } from '@agent-device/selectors/absence-observation-errors';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
 import type { DaemonRequest, DaemonResponse } from './daemon-request.ts';
-import { markSessionPartialRefsIssued, resolveRefStalenessWarning } from './session-snapshot.ts';
+import type { SessionRef } from './session-state.ts';
+import type { SessionStore } from './session-store.ts';
+import {
+  markSessionPartialRefsIssued,
+  publishAmbiguousMatchCandidateRefs,
+  resolveRefStalenessWarning,
+} from './session-snapshot.ts';
 import {
   checkElementTargetArgs,
   checkGetFormat,
@@ -158,27 +164,34 @@ export async function dispatchGetViaRuntime(
           mintedGeneration: target.refGeneration,
         })
       : undefined;
-  const response = await toDaemonResponse(async () => {
-    const result = await runtime.selectors.get({
-      session: params.sessionName,
-      requestId: req.meta?.requestId,
-      property: sub,
-      target: target.target,
-      expectedResolvedTarget: replayTargetGuard,
-    });
-    recordIfSession(
-      params.sessionStore,
-      resolvedRuntime.ref,
-      req,
-      buildGetRecordResult(result, sub),
-      {
-        node: result.node,
-        preActionNodes: result.preActionNodes,
-      },
-    );
-    const data = toDaemonGetData(result);
-    return staleRefsWarning ? { ...data, warning: staleRefsWarning } : data;
-  });
+  const response = await toDaemonResponse(
+    async () => {
+      const result = await runtime.selectors.get({
+        session: params.sessionName,
+        requestId: req.meta?.requestId,
+        property: sub,
+        target: target.target,
+        expectedResolvedTarget: replayTargetGuard,
+      });
+      recordIfSession(
+        params.sessionStore,
+        resolvedRuntime.ref,
+        req,
+        buildGetRecordResult(result, sub),
+        {
+          node: result.node,
+          preActionNodes: result.preActionNodes,
+        },
+      );
+      const data = toDaemonGetData(result);
+      return staleRefsWarning ? { ...data, warning: staleRefsWarning } : data;
+    },
+    {
+      ref: resolvedRuntime.ref,
+      sessionStore: params.sessionStore,
+      consumed: params.consumedSnapshot,
+    },
+  );
   return withCaptureDisclosures({
     response,
     consumedTree: consumedSessionSnapshot(params),
@@ -225,20 +238,33 @@ export async function dispatchIsViaRuntime(
   });
   if (!resolvedRuntime.ok) return resolvedRuntime.response;
 
-  const response = await toDaemonResponse(async () => {
-    const result = await resolvedRuntime.runtime.selectors.is({
-      session: params.sessionName,
-      requestId: req.meta?.requestId,
-      predicate,
-      selector: selectorExpression,
-      expectedText,
-      expectedResolvedTarget: replayTargetGuard,
-    });
-    const recordedTarget = readRecordedResolutionTarget(result);
-    const strippedResult = stripResolutionPayload(result);
-    recordIfSession(params.sessionStore, resolvedRuntime.ref, req, strippedResult, recordedTarget);
-    return stripSelectorChain(strippedResult);
-  });
+  const response = await toDaemonResponse(
+    async () => {
+      const result = await resolvedRuntime.runtime.selectors.is({
+        session: params.sessionName,
+        requestId: req.meta?.requestId,
+        predicate,
+        selector: selectorExpression,
+        expectedText,
+        expectedResolvedTarget: replayTargetGuard,
+      });
+      const recordedTarget = readRecordedResolutionTarget(result);
+      const strippedResult = stripResolutionPayload(result);
+      recordIfSession(
+        params.sessionStore,
+        resolvedRuntime.ref,
+        req,
+        strippedResult,
+        recordedTarget,
+      );
+      return stripSelectorChain(strippedResult);
+    },
+    {
+      ref: resolvedRuntime.ref,
+      sessionStore: params.sessionStore,
+      consumed: params.consumedSnapshot,
+    },
+  );
   return withCaptureDisclosures({
     response: await maybeAndroidForegroundBlockerResponse(params, response, `is ${predicate}`),
     consumedTree: consumedSessionSnapshot(params),
@@ -288,13 +314,37 @@ function parseGetTarget(req: DaemonRequest):
   return { ok: true, target: { kind: 'selector', selector } };
 }
 
+/**
+ * Flattens a selector-route result to the daemon wire shape. `issuance` is
+ * passed by the routes whose refusals can print candidate `@ref`s (`is`,
+ * `get attrs`): ADR 0014's ambiguity-issuance rule then runs before flattening,
+ * so a printed candidate is admitted on the frame that listed it — the same
+ * contract the acting refusal gets through the touch runtime (#2870 review).
+ * `consumed` is the capture runtime's slot for the tree THIS request consumed:
+ * issuance is only valid against a capture the session actually stored under
+ * that generation, and a sparse-quality capture deliberately stores nothing.
+ * Routes that never print candidates (`wait`, read-only `find`) pass nothing
+ * and keep the plain flatten.
+ */
 export async function toDaemonResponse(
   task: () => Promise<Record<string, unknown>>,
+  issuance?: {
+    ref: SessionRef | undefined;
+    sessionStore: SessionStore;
+    consumed: { state?: SnapshotState } | undefined;
+  },
 ): Promise<DaemonResponse> {
   try {
     return { ok: true, data: await task() };
   } catch (error) {
-    const appError = asAppError(error);
+    const appError = issuance
+      ? publishAmbiguousMatchCandidateRefs(
+          issuance.ref,
+          issuance.sessionStore,
+          asAppError(error),
+          issuance.consumed?.state,
+        )
+      : asAppError(error);
     return errorResponse(appError.code, appError.message, appError.details);
   }
 }

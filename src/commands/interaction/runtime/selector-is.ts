@@ -22,6 +22,7 @@ import {
   type CapturedSnapshot,
   type SelectorSnapshotOptions,
   captureSelectorSnapshot,
+  observationReadFailure,
 } from './selector-read-shared.ts';
 import { deriveSelectorCapturePolicy } from './selector-capture-policy.ts';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
@@ -151,17 +152,15 @@ async function resolveAssertedPredicate(
     },
   );
   if (outcome.kind !== 'target') {
-    throw new AppError(
-      'COMMAND_FAILED',
-      formatSelectorFailure(selectorExpression, [], { unique: true }),
-      {
-        command: 'is',
-        reason: INTERACTION_ERROR_REASONS.selectorNotFound,
+    throw observationReadFailure({
+      outcome,
+      selectorExpression,
+      command: 'is',
+      details: {
         predicate: predicate,
         selector: selectorExpression,
-        hint: selectorFailureHint([]),
       },
-    );
+    });
   }
   const result = evaluateIsPredicate({
     predicate,

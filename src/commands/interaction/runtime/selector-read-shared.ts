@@ -4,15 +4,27 @@ import type {
   CommandSessionRecord,
 } from '../../../runtime-contract.ts';
 import type { BackendSnapshotResult } from '../../../backend.ts';
-import { AppError } from '@agent-device/kernel/errors';
+import {
+  AppError,
+  discloseDispatch,
+  type AppErrorDetails,
+  type DispatchDisclosure,
+} from '@agent-device/kernel/errors';
 import type {
   SnapshotNode,
   SnapshotPreferredBackend,
   SnapshotState,
 } from '@agent-device/kernel/snapshot';
 import { findNodeByRef, normalizeRef } from '@agent-device/kernel/snapshot';
-import { STALE_REF_HINT } from '@agent-device/selectors';
+import {
+  formatSelectorFailure,
+  selectorFailureHint,
+  STALE_REF_HINT,
+  type SelectorResolution,
+} from '@agent-device/selectors';
+import type { SelectorPipelineOutcome } from '@agent-device/selectors/selector-pipeline';
 import { INTERACTION_ERROR_REASONS } from '@agent-device/selectors/interaction-error';
+import { elementMatchCandidateDetails } from '@agent-device/capture-kit/snapshot-lines';
 import { isSparseSnapshotQualityVerdict } from '@agent-device/capture-kit/snapshot-quality-verdict';
 import { extractReadableText } from '@agent-device/capture-kit/text-surface';
 import { now, toBackendContext } from '../../runtime-common.ts';
@@ -161,4 +173,103 @@ export function resolveRefNode(
     });
   }
   return { ref, node };
+}
+
+/**
+ * The one `selector_not_found` refusal shape shared by the acting rows and the
+ * strict reads: COMMAND_FAILED, `formatSelectorFailure`'s message, the typed
+ * reason, and `selectorFailureHint` — built once so a hint or message edit
+ * cannot drift between routes. The two axes where those routes genuinely
+ * differ on the wire stay explicit parameters: `unique` (message shape) and
+ * `dispatched` (the acting route proves `'no'`; the read route proves nothing
+ * about device dispatch and omits the field rather than asserting one).
+ * Fixed contract fields (`reason`, `hint`) are written AFTER caller details so
+ * no caller spread order can clobber them.
+ */
+export function selectorNotFoundFailure(
+  selectorExpression: string,
+  options: {
+    /** The resolution diagnostics the message and hint read (empty: "did not match"). */
+    diagnostics?: SelectorResolution['diagnostics'];
+    unique?: boolean;
+    dispatched?: DispatchDisclosure;
+  } & AppErrorDetails,
+): AppError {
+  const { diagnostics = [], unique = true, dispatched, ...details } = options;
+  const error = new AppError(
+    'COMMAND_FAILED',
+    formatSelectorFailure(selectorExpression, diagnostics, { unique }),
+    {
+      ...details,
+      reason: INTERACTION_ERROR_REASONS.selectorNotFound,
+      hint: selectorFailureHint(diagnostics),
+    },
+  );
+  return dispatched === undefined ? error : discloseDispatch(error, dispatched);
+}
+
+/**
+ * The ambiguity refusal never names the caller's whole expression: like the
+ * acting refusal, it names the matched alternative, and the fixed contract
+ * fields are written AFTER any caller details so a caller cannot clobber them.
+ * `is` passes `predicate` and its authored expression (already reported by the
+ * success payload); the authored expression loses to the matched alternative
+ * here on purpose — that is what "which alternative matched twice" means.
+ */
+function selectorAmbiguousFailure(
+  selector: string,
+  matchedNodes: readonly SnapshotNode[],
+  options: { command: string } & AppErrorDetails,
+): AppError {
+  const { command, ...details } = options;
+  return new AppError(
+    'AMBIGUOUS_MATCH',
+    `Selector matched ${matchedNodes.length} elements: ${selector}`,
+    {
+      ...details,
+      ...elementMatchCandidateDetails(matchedNodes),
+      command,
+      selector,
+      // No `find '<selector>' list` echo here: an authored label can contain a
+      // single quote, and a hard single-quoted re-run command is not CLI-safe.
+      hint: `Narrow the selector with role/id/longer text, or act on a printed candidate with a command that takes refs, such as press.`,
+    },
+  );
+}
+
+/**
+ * The shared failure door for the observation reads that refuse to guess which
+ * element they mean (`is` predicates other than `exists`/`absent`, and
+ * `get attrs` — both `readUnique` rows). The pipeline reports three distinct
+ * refusals and they are three different facts about the screen, so the door
+ * keys on the outcome kind, never on message text:
+ *
+ * - `none` — nothing matched: `selector_not_found`, which genuinely means the
+ *   element is not in the tree.
+ * - `ambiguous` — N nodes matched and the row refuses to choose:
+ *   `AMBIGUOUS_MATCH`, the code the acting refusal already answers with
+ *   (#2870: this used to be reported as `selector_not_found`, which to an
+ *   agent reads as "the element does not exist" on a screen where it is
+ *   plainly on display). What the two producers SHARE is the code and
+ *   `elementMatchCandidateDetails` — the one disclosure builder (cap,
+ *   snapshot-line renderer, `matches`/`candidates` keys) every surface already
+ *   reads through `readErrorCandidateViews`; each keeps its own message and
+ *   remaining details for its own command.
+ * - `occluded` — the row ignores occlusion and cannot produce it; the caller
+ *   keeps its own not-found shape.
+ */
+export function observationReadFailure(params: {
+  outcome: SelectorPipelineOutcome;
+  selectorExpression: string;
+  command: string;
+  details?: AppErrorDetails;
+}): AppError {
+  const { outcome, selectorExpression, command, details } = params;
+  if (outcome.kind === 'ambiguous') {
+    return selectorAmbiguousFailure(outcome.selector, outcome.matchedNodes, {
+      command,
+      ...details,
+    });
+  }
+  return selectorNotFoundFailure(selectorExpression, { command, unique: true, ...details });
 }

@@ -8,7 +8,7 @@ import { isSnapshotNodeInteractionBlocked } from '@agent-device/capture-kit/snap
 import {
   isRootInteractionContainer,
   resolveActionableTouchResolution,
-  resolveUnverifiedWrapperControl,
+  resolveElementReportedTwice,
 } from './interaction-targeting.ts';
 import type {
   CandidateSetPipelinePolicy,
@@ -132,20 +132,27 @@ type ResolvedRowTarget = {
 };
 
 /**
- * Several matches refused where the candidate set is one control reported
- * through its own accessibility wrapper: there is nothing to choose among, and
- * `is <predicate>`/`get attrs`/`screenshot --crop-on` answer about the control
- * instead of reporting no match for a control on screen. A row that ranks or
+ * Several matches refused where the candidate set is really ONE element the
+ * platform reported twice — a control under its own accessibility wrapper (#2498),
+ * or an authored text reporter and the accessibility element mirroring it (#2870):
+ * there is nothing to choose among, and
+ * `is <predicate>`/`get attrs`/`screenshot --crop-on` answer about that element
+ * instead of reporting no match for something plainly on screen. A row that ranks or
  * takes the document-order head resolves on its own and never reaches here —
  * a wrapper chain has distinct depths, which is what its tiebreak decides on —
  * and an acting row collapses inside `classifyActionableTouchCandidates`, which
  * additionally has to settle a touch point.
+ *
+ * The RN text pair is the same decision the interactive snapshot already makes:
+ * `collectIosRepeatedStaticSuppression` keeps the outer reporter and suppresses its
+ * repeated descendant, so `snapshot -i` has always shown that line once. The read
+ * door now answers about the node that snapshot row names.
  */
 function resolveEquivalentControlTarget(
   nodes: SnapshotNode[],
   refused: { selector: string; selectorIndex: number; matchedNodes: SnapshotNode[] },
 ): ResolvedRowTarget | null {
-  const control = resolveUnverifiedWrapperControl(nodes, refused.matchedNodes);
+  const control = resolveElementReportedTwice(nodes, refused.matchedNodes);
   if (!control) return null;
   return {
     node: control,
