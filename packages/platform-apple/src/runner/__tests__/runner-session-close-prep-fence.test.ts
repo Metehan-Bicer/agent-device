@@ -181,7 +181,7 @@ beforeEach(async () => {
   );
 });
 
-test('close during a cold build leaves the start no way to spawn a replacement build', async () => {
+test.each([false, true])('cold close (retain=%s) fences replacement builds', async (retain) => {
   const device = IOS_ADMISSION_SIMULATOR;
   // Park close inside its prep stop: the kill is attempted, but the stop has not returned, so
   // close provably has not reached the session lock yet (the start holds it) and no later fence
@@ -209,7 +209,7 @@ test('close during a cold build leaves the start no way to spawn a replacement b
   await vi.waitFor(() => assert.equal(builds.length, 1));
   assert.equal(runnerPrepProcessChildren(device.id).length, 1, 'the build is on the prep ledger');
 
-  const closing = releaseIosRunnerOnClose(device.id, { retain: false });
+  const closing = releaseIosRunnerOnClose(device.id, { retain });
   await killAttempted;
   assert.equal(
     runnerStartTeardownPending(device.id),

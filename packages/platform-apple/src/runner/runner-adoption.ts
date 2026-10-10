@@ -155,6 +155,7 @@ function detachRunnerSessionForShutdown(session: RunnerSession): RunnerDetachOut
   } catch {
     return { detached: false, lane, reason: 'lease_write_failed' };
   }
+  session.listenerWatch?.close();
   // Only once the lease says the runner is handed over does this process give up its own sides of
   // the runner's log: until that write lands the session is still owned, and an owned session that
   // stopped following its runner's output is worse off than one that never handed anything off.

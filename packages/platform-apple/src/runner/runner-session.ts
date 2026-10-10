@@ -81,8 +81,6 @@ export type RunnerSessionOptions = AppleRunnerLifecycleOptions;
 
 const runnerSessions = new Map<string, RunnerSession>();
 const runnerSessionLocks = new Map<string, Promise<unknown>>();
-const runnerIdleStopTimers = new Map<string, NodeJS.Timeout>();
-const RUNNER_RETAINED_IDLE_STOP_DEFAULT_MS = 5 * 60_000;
 const RUNNER_STALE_BUNDLE_UNINSTALL_TIMEOUT_MS = 10_000;
 
 function withRunnerSessionLock<T>(deviceId: string, task: () => Promise<T>): Promise<T> {
@@ -93,9 +91,6 @@ export async function ensureRunnerSession(
   device: DeviceInfo,
   options: RunnerSessionOptions,
 ): Promise<RunnerSession> {
-  // Any runner use means the device is active again: a pending idle stop
-  // from a retained-after-close runner no longer applies.
-  cancelIosRunnerIdleStop(device.id);
   // This start's admission: the loop that owns the start across retries supplies one, and every
   // other start takes a token for itself. Both are taken synchronously, before the first await and
   // registered with the device, so a teardown beginning in this same turn closes it even while
@@ -126,7 +121,10 @@ export async function ensureRunnerSession(
       if (existing) {
         assertExpectedRunnerSession(existing, options.expectedRunnerSessionId);
         const reusable = await resolveReusableRunnerSession(device, existing, budget.phase);
-        if (reusable) return reusable;
+        if (reusable) {
+          reusable.retention?.cancel();
+          return reusable;
+        }
       }
 
       return await withRunnerLeaseLock(
@@ -142,8 +140,6 @@ export async function ensureRunnerSession(
   });
   const { raceRunnerStartAgainstCaller } = await import('./runner-start-budget.ts');
   return await raceRunnerStartAgainstCaller(
-    // A start that minted its own token releases it; a loop-supplied token belongs to the loop,
-    // which finishes it when the loop itself is done retrying (#3220).
     ownedAdmission ? start : start.finally(() => finishRunnerStartAdmission(startAdmission)),
     startAdmission,
     options.signal,
@@ -198,6 +194,7 @@ async function startRunnerSessionWithLease(
     await prepareRunnerLeaseForStartup(device, runnerLeaseCleanupAdapter, logicalLeaseContext);
   });
   await measureRunnerStartupStep(startupTimings, 'ensure_booted', async () => {
+    assertRunnerStartAdmitsPreparation(device.id, startAdmission);
     await ensureBootedIfNeeded(device);
   });
   // Device first, host second: both answers can be wrong at once, and the phone's own state is the
@@ -293,6 +290,7 @@ async function startRunnerSessionWithLease(
         // where this generation's output starts is only trustworthy once those bytes have landed below
         // it; otherwise a queued build line reads as the runner's own failure output (#2681).
         await flushRunnerLogAppends(runnerLogPath).catch(() => {});
+        assertRunnerStartAdmitsPreparation(device.id, startAdmission);
         return await launchRunnerProcess({
           device,
           port,
@@ -612,59 +610,23 @@ async function stopRunnerSessionInternal(
   }
 }
 
-// Bounds the lifetime of a runner retained after session close: the retained
-// runner holds the device's runner lease, which blocks every other daemon on
-// the machine from using the device. If nothing touches the runner within the
-// idle window, stop it and release the lease. Any ensureRunnerSession call
-// cancels the pending stop. AGENT_DEVICE_IOS_RUNNER_IDLE_STOP_MS overrides
-// the window; 0 disables idle stops (retain until daemon exit, the pre-idle
-// behavior).
-export function scheduleIosRunnerIdleStop(deviceId: string): void {
-  cancelIosRunnerIdleStop(deviceId);
-  const idleMs = resolveRunnerIdleStopMs();
-  if (idleMs <= 0) return;
-  if (!runnerSessions.has(deviceId)) return;
-  const timer = setTimeout(() => {
-    runnerIdleStopTimers.delete(deviceId);
+async function stopRetainedRunner(
+  session: RunnerSession,
+  retention: NonNullable<RunnerSession['retention']>,
+  reason: 'idle_timeout' | 'listener_lost',
+): Promise<void> {
+  await withRunnerSessionLock(session.deviceId, async () => {
+    if (runnerSessions.get(session.deviceId) !== session || session.retention !== retention) return;
     emitDiagnostic({
-      level: 'info',
-      phase: 'ios_runner_idle_stop',
-      data: { deviceId, idleMs },
+      level: reason === 'listener_lost' ? 'warn' : 'info',
+      phase: reason === 'listener_lost' ? 'ios_runner_warm_stop' : 'ios_runner_idle_stop',
+      data: { deviceId: session.deviceId, sessionId: session.sessionId, reason },
     });
-    stopIosRunnerSession(deviceId).catch((error: unknown) => {
-      emitDiagnostic({
-        level: 'warn',
-        phase: 'ios_runner_idle_stop_failed',
-        data: {
-          deviceId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+    await stopRunnerSessionInternal(session.deviceId, session, {
+      graceful: reason !== 'listener_lost',
+      waitTimeoutMs: RUNNER_INVALIDATE_WAIT_TIMEOUT_MS,
     });
-  }, idleMs);
-  timer.unref?.();
-  runnerIdleStopTimers.set(deviceId, timer);
-  emitDiagnostic({
-    level: 'debug',
-    phase: 'ios_runner_idle_stop_scheduled',
-    data: { deviceId, idleMs },
   });
-}
-
-export function cancelIosRunnerIdleStop(deviceId: string): void {
-  const timer = runnerIdleStopTimers.get(deviceId);
-  if (!timer) return;
-  clearTimeout(timer);
-  runnerIdleStopTimers.delete(deviceId);
-}
-
-function resolveRunnerIdleStopMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.AGENT_DEVICE_IOS_RUNNER_IDLE_STOP_MS?.trim();
-  if (raw) {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
-  }
-  return RUNNER_RETAINED_IDLE_STOP_DEFAULT_MS;
 }
 
 /** The first command that is not a readiness probe makes the session the caller's, not a guess. */
@@ -712,11 +674,17 @@ async function stopIosRunnerSessionDevice(
   deviceId: string,
   fenceSettle?: () => void,
 ): Promise<void> {
-  cancelIosRunnerIdleStop(deviceId);
   try {
     await withRunnerSessionLock(deviceId, async () => {
       await withRunnerLeaseLock(deviceId, async () => {
-        await stopRunnerSessionInternal(deviceId, undefined, { leaseLockHeld: true });
+        const session = runnerSessions.get(deviceId);
+        await stopRunnerSessionInternal(deviceId, session, {
+          leaseLockHeld: true,
+          graceful:
+            session?.state === 'ready' &&
+            !isRunnerMainThreadOccupied(session) &&
+            !session.listenerWatch?.lost,
+        });
         await cleanupOwnedIosRunnerLease(deviceId);
       });
       fenceSettle?.();
@@ -726,44 +694,48 @@ async function stopIosRunnerSessionDevice(
   }
 }
 
-/**
- * Releases a runner at session close, preferring warm reuse only when the runner is actually
- * reusable. A non-retained close, or a retained close over a runner whose last exchange reported
- * main-thread work still draining, stops it now: a busy runner refuses every command until it drains
- * or wedges, so pooling it back hands the same stalled process to the next `open` (#2552). An idle
- * retained runner keeps warm reuse via the idle-stop timer. The decision is owned here because the
- * occupancy fact lives on the session, and awaited so `close` returns only once the lease is gone.
- * Non-retained close first fences the device's start admission, then stops the device's current
- * prep processes, before taking the session lock an in-flight cold start holds through its build:
- * a start that answers the kill by retrying its build finds the spawn refused, which is what keeps
- * close from waiting on the replacement build (#3220).
- */
+/** Retires startup recovery at close; only a serving, observed generation can remain idle. */
 export async function releaseIosRunnerOnClose(
   deviceId: string,
   options: { retain: boolean },
 ): Promise<void> {
-  const session = runnerSessions.get(deviceId);
-  if (options.retain && !isRunnerMainThreadOccupied(session)) {
-    scheduleIosRunnerIdleStop(deviceId);
-    return;
-  }
-  if (options.retain) {
-    emitDiagnostic({
-      level: 'info',
-      phase: 'ios_runner_retain_skipped_busy',
-      data: { deviceId },
-    });
-  }
-  // First the fence, then the kill: an in-flight start that answers the kill by retrying its
-  // build finds admission closed and stops, and the fence outlives the kill and the session stop
-  // until this close settles — while it stands, nothing prepares this device (#3220).
+  const candidate = runnerSessions.get(deviceId);
+  const busyAtClose = isRunnerMainThreadOccupied(candidate);
   const settleFence = fenceRunnerStartAdmissionsForTeardown(deviceId);
   try {
+    if (options.retain && candidate?.state === 'ready' && !busyAtClose) {
+      const retained = await withRunnerSessionLock(deviceId, async () => {
+        const session = runnerSessions.get(deviceId);
+        if (!session) return false;
+        const { retainRunnerSession } = await import('./runner-retention.ts');
+        if (
+          await retainRunnerSession(session, (retention, reason) =>
+            stopRetainedRunner(session, retention, reason),
+          )
+        ) {
+          settleFence();
+          return true;
+        }
+        emitDiagnostic({
+          level: 'info',
+          phase: isRunnerMainThreadOccupied(session)
+            ? 'ios_runner_retain_skipped_busy'
+            : 'ios_runner_retain_skipped',
+          data: { deviceId, sessionId: session.sessionId, state: session.state },
+        });
+        return false;
+      });
+      if (retained) return;
+    } else if (options.retain && busyAtClose && candidate) {
+      emitDiagnostic({
+        level: 'info',
+        phase: 'ios_runner_retain_skipped_busy',
+        data: { deviceId, sessionId: candidate.sessionId, state: candidate.state },
+      });
+    }
     await stopRunnerPrepProcesses(deviceId);
     await stopIosRunnerSessionDevice(deviceId, settleFence);
   } finally {
-    // The error path settles too: a close that throws mid-teardown must not fence the device
-    // past its own failure.
     settleFence();
   }
 }
@@ -790,12 +762,11 @@ export async function abortAllIosRunnerSessions(): Promise<void> {
 }
 
 // The detach decision itself lives in runner-adoption.ts beside the adoption it hands off to
-// (#2681); this is the map side: a detached session leaves the registry and drops its idle
-// timer (the detached module gives up the log observation and marks the session stopped).
+// (#2681); detached active generations leave the registry. Idle retained generations stay
+// owned until shutdown stops them.
 export async function detachIosRunnerSessionsForShutdown(): Promise<number> {
   return await detachRunnerSessionsForShutdown(runnerSessions, (deviceId) => {
     runnerSessions.delete(deviceId);
-    cancelIosRunnerIdleStop(deviceId);
   });
 }
 
@@ -865,7 +836,7 @@ export async function executeRunnerCommandWithSession(
 ): Promise<Record<string, unknown>> {
   emitRunnerStartupTimings(session, command.command);
   const { executeRunnerExchange } = await import('./runner-exchange.ts');
-  return executeRunnerExchange(
+  const data = await executeRunnerExchange(
     device,
     session,
     command,
@@ -874,6 +845,14 @@ export async function executeRunnerCommandWithSession(
     (reason) => invalidateRunnerSession(session, reason),
     signal,
   );
+  if (runnerSessions.get(device.id) === session && session.state === 'ready') {
+    const { observeRunnerListener } = await import('./runner-retention.ts');
+    observeRunnerListener(session, () => {
+      const retention = session.retention;
+      if (retention) return stopRetainedRunner(session, retention, 'listener_lost');
+    });
+  }
+  return data;
 }
 
 /**

@@ -44,6 +44,7 @@ import type {
   AppleRunnerPrepareResult,
 } from './runner-provider.ts';
 import {
+  assertRunnerStartAdmitsPreparation,
   finishRunnerStartAdmission,
   markRunnerXctestrunArtifactBadForRun,
   openRunnerStartLoopAdmission,
@@ -156,11 +157,9 @@ async function handlePrepareHealthFailure(params: {
   error: unknown;
 }): Promise<PrepareAttemptResult> {
   const { device, session, command, options, signal, attempt, error } = params;
+  assertRunnerStartAdmitsPreparation(device.id, options.startAdmission);
   const appErr = asAppError(error, 'COMMAND_FAILED');
   if (isRequestCanceledError(appErr)) {
-    // The owning request was canceled mid-startup (client disconnect): stop the
-    // just-created session so a canceled prep never leaves a runner retained for
-    // reuse. Scoped to this request's device only.
     await invalidateRunnerSessionBestEffort(session, 'prepare_runner_request_canceled');
     throw error;
   }
