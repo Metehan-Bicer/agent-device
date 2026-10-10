@@ -6,11 +6,12 @@ import { resolveMetroServerUrl } from './metro-reload-endpoints.ts';
 /**
  * The session's local dev-server binding — the single store `metro reload` resolves against.
  * Written by `metro prepare` and `open`'s metro hint flags; cleared on session close and on
- * hintless fresh-session opens. The daemon's SessionRuntimeHints only drive device-native
- * dev-server prefs.
+ * hintless fresh-session opens. Prepared device addresses identify which app runtime may reuse
+ * the local control address on a fresh open.
  */
 export type MetroSessionHints = {
   controlBaseUrl: string;
+  deviceBaseUrls?: string[];
 };
 
 function metroSessionHintsPath(stateDir: string, session: string): string {
@@ -62,7 +63,16 @@ export function readMetroSessionHints(options: {
         ? new URL(record.controlBaseUrl)
         : resolveMetroServerUrl({ runtime });
     return url.protocol === 'http:' || url.protocol === 'https:'
-      ? { controlBaseUrl: url.toString() }
+      ? {
+          controlBaseUrl: url.toString(),
+          ...(Array.isArray(record.deviceBaseUrls)
+            ? {
+                deviceBaseUrls: record.deviceBaseUrls.filter(
+                  (value): value is string => typeof value === 'string',
+                ),
+              }
+            : {}),
+        }
       : undefined;
   } catch {
     return undefined;

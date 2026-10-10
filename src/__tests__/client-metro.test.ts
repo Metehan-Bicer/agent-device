@@ -808,6 +808,7 @@ test('metro reload targets the dev server bound by metro prepare in the same ses
     });
     assert.deepEqual(storedHints, {
       controlBaseUrl: `http://127.0.0.1:${metroPort}/`,
+      deviceBaseUrls: [`http://127.0.0.1:${metroPort}/`],
     });
 
     // No explicit --metro-host/--metro-port/--bundle-url: reload must resolve against the
@@ -909,6 +910,7 @@ test('metro prepare keeps a public Expo address separate from the local reload a
     });
     assert.deepEqual(storedHints, {
       controlBaseUrl: `http://127.0.0.1:${metroPort}/`,
+      deviceBaseUrls: [`https://127.0.0.1:${metroPort}${publicBasePath}`],
     });
   } finally {
     process.env.PATH = previousPath;

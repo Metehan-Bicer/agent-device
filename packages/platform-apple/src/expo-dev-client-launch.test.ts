@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import type { OpenApplicationInput } from '@agent-device/contracts/application-lifecycle-runtime';
 import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
-import type { DeviceInfo } from '@agent-device/kernel/device';
+import { openInput as lifecycleOpenInput, simulator as SIMULATOR } from './lifecycle.fixtures.ts';
 
 vi.mock('./core/app-resolution.ts', () => ({
   resolveIosSimulatorExpoDevClientScheme: vi.fn(),
@@ -15,28 +15,13 @@ import {
 
 const resolveScheme = vi.mocked(resolveIosSimulatorExpoDevClientScheme);
 
-const SIMULATOR: DeviceInfo = {
-  platform: 'apple',
-  id: 'sim-1',
-  name: 'iPhone 17 Pro',
-  kind: 'simulator',
-  booted: true,
-};
-
 function openInput(overrides: Partial<OpenApplicationInput> = {}): OpenApplicationInput {
   return {
-    positionals: ['com.example.devclient'],
+    ...lifecycleOpenInput(),
     appBundleId: 'com.example.devclient',
-    surface: 'app',
-    hasExistingSession: false,
-    relaunch: false,
-    prewarmRunnerBeforeOpen: false,
-    enableTestIme: false,
-    stateDir: '/tmp/state',
     runtimeHints: { metroHost: '127.0.0.1', metroPort: '8085' },
-    execution: {},
     ...overrides,
-  } as OpenApplicationInput;
+  };
 }
 
 afterEach(() => {

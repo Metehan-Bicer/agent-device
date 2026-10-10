@@ -586,12 +586,21 @@ function metroSessionHintsScope(
 // The metro-sessions file is the session's dev-server binding; see MetroSessionHints.
 function persistMetroSessionHints(
   config: AgentDeviceClientConfig,
-  result: Pick<MetroPrepareResult, 'statusUrl'>,
+  result: Pick<MetroPrepareResult, 'statusUrl' | 'iosRuntime' | 'androidRuntime'>,
 ): void {
   try {
     writeMetroSessionHints({
       ...metroSessionHintsScope(config),
-      hints: { controlBaseUrl: new URL('.', result.statusUrl).toString() },
+      hints: {
+        controlBaseUrl: new URL('.', result.statusUrl).toString(),
+        deviceBaseUrls: [
+          ...new Set(
+            [result.iosRuntime, result.androidRuntime]
+              .map((runtime) => metroHintsFromRuntime(runtime)?.controlBaseUrl)
+              .filter((url): url is string => url !== undefined),
+          ),
+        ],
+      },
     });
   } catch {
     // Session-hint persistence is best-effort; reload still works with explicit flags.
@@ -634,7 +643,13 @@ function recordMetroSessionHintsAfterOpen(params: {
     const scope = metroSessionHintsScope(params.config, params.options);
     const hints = metroHintsFromRuntime(params.runtime);
     if (hints) {
-      if (params.options.runtime === undefined && readMetroSessionHints(scope)) return;
+      const binding =
+        params.options.runtime === undefined ? readMetroSessionHints(scope) : undefined;
+      if (
+        binding &&
+        (params.sessionReused || binding.deviceBaseUrls?.includes(hints.controlBaseUrl))
+      )
+        return;
       writeMetroSessionHints({ ...scope, hints });
       return;
     }
