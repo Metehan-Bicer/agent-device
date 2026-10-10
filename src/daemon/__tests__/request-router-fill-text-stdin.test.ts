@@ -171,6 +171,44 @@ test('a backend error that echoes a --record-as stdin value shows its placeholde
   if (!result.ok) expect(result.error.message).toBe('could not type "${PASSWORD}" into the field');
 });
 
+test.each([
+  ['an unrecorded', 'abc[REDACTED]xyz', {}, '[REDACTED]', makeSession],
+  [
+    'a --record-as',
+    'abc${PASSWORD}xyz',
+    { recordAs: 'PASSWORD' },
+    '${PASSWORD}',
+    makeAuthoringSession,
+  ],
+])(
+  '%s --text-stdin value that contains its own placeholder is returned by neither a success nor an error',
+  async (_name, secret, flags, placeholder, sessionFor) => {
+    const filled = fillWithStdinText(
+      sessionFor('web', { device: WEB_DESKTOP_DEVICE }),
+      flags,
+      undefined,
+      secret,
+    );
+    const failed = fillWithStdinText(
+      sessionFor('web', { device: WEB_DESKTOP_DEVICE }),
+      flags,
+      (text) => new Error(`could not type "${text}" into the field`),
+      secret,
+    );
+
+    const succeeded = await filled.response;
+    const errored = await failed.response;
+    expect(filled.typed).toEqual([secret]);
+    expect(failed.typed).toEqual([secret]);
+    expect(succeeded.ok).toBe(true);
+    expect(JSON.stringify(succeeded)).not.toContain(secret);
+    expect(JSON.stringify(filled.sessionStore.get('web')?.actions ?? [])).not.toContain(secret);
+    expect(errored.ok).toBe(false);
+    expect(JSON.stringify(errored)).not.toContain(secret);
+    if (!errored.ok) expect(errored.error.message).toBe(placeholder);
+  },
+);
+
 test('a short --text-stdin value is redacted from the error text but not from its log path', async () => {
   // `stdin` also appears in this request's id, which names its diagnostics file.
   const { response } = fillWithStdinText(
