@@ -36,25 +36,20 @@ test('writeMetroSessionHints and readMetroSessionHints round-trip per session', 
       stateDir,
       session: 'proj-a',
       hints: {
-        metroHost: '127.0.0.1',
-        metroPort: 8082,
-        bundleUrl: 'http://127.0.0.1:8082/.expo/.virtual-metro-entry.bundle?platform=ios',
+        controlBaseUrl: 'http://127.0.0.1:8082/',
       },
     });
     writeMetroSessionHints({
       stateDir,
       session: 'proj-b',
-      hints: { metroHost: '127.0.0.1', metroPort: 8090 },
+      hints: { controlBaseUrl: 'http://127.0.0.1:8090/' },
     });
 
     assert.deepEqual(readMetroSessionHints({ stateDir, session: 'proj-a' }), {
-      metroHost: '127.0.0.1',
-      metroPort: 8082,
-      bundleUrl: 'http://127.0.0.1:8082/.expo/.virtual-metro-entry.bundle?platform=ios',
+      controlBaseUrl: 'http://127.0.0.1:8082/',
     });
     assert.deepEqual(readMetroSessionHints({ stateDir, session: 'proj-b' }), {
-      metroHost: '127.0.0.1',
-      metroPort: 8090,
+      controlBaseUrl: 'http://127.0.0.1:8090/',
     });
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
@@ -67,17 +62,16 @@ test('writeMetroSessionHints overwrites a previous hint for the same session', (
     writeMetroSessionHints({
       stateDir,
       session: 'default',
-      hints: { metroHost: '127.0.0.1', metroPort: 8081 },
+      hints: { controlBaseUrl: 'http://127.0.0.1:8081/' },
     });
     writeMetroSessionHints({
       stateDir,
       session: 'default',
-      hints: { metroHost: '127.0.0.1', metroPort: 8082 },
+      hints: { controlBaseUrl: 'http://127.0.0.1:8082/' },
     });
 
     assert.deepEqual(readMetroSessionHints({ stateDir, session: 'default' }), {
-      metroHost: '127.0.0.1',
-      metroPort: 8082,
+      controlBaseUrl: 'http://127.0.0.1:8082/',
     });
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
@@ -90,7 +84,7 @@ test('clearMetroSessionHints removes a stored hint', () => {
     writeMetroSessionHints({
       stateDir,
       session: 'default',
-      hints: { metroHost: '127.0.0.1', metroPort: 8082 },
+      hints: { controlBaseUrl: 'http://127.0.0.1:8082/' },
     });
     clearMetroSessionHints({ stateDir, session: 'default' });
 
@@ -119,14 +113,26 @@ test('sessions with unsafe characters get distinct sanitized files', () => {
     writeMetroSessionHints({
       stateDir,
       session: 'feature/branch-a',
-      hints: { metroHost: '127.0.0.1', metroPort: 8082 },
+      hints: { controlBaseUrl: 'http://127.0.0.1:8082/' },
     });
 
     assert.deepEqual(readMetroSessionHints({ stateDir, session: 'feature/branch-a' }), {
-      metroHost: '127.0.0.1',
-      metroPort: 8082,
+      controlBaseUrl: 'http://127.0.0.1:8082/',
     });
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test('released session records retain their reload address when read as a binding', () => {
+  const stateDir = tempStateDir();
+  const filePath = path.join(stateDir, 'metro-sessions', 'default.json');
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(
+    filePath,
+    JSON.stringify({ bundleUrl: 'https://metro.example.test/tenant-42/index.bundle?platform=ios' }),
+  );
+  assert.deepEqual(readMetroSessionHints({ stateDir, session: 'default' }), {
+    controlBaseUrl: 'https://metro.example.test/tenant-42',
+  });
 });

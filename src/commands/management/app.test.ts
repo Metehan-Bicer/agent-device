@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
 
 import path from 'node:path';
 import type { CliFlags } from '@agent-device/contracts/command';
@@ -10,6 +11,11 @@ import type { DaemonRequest, DaemonResponse } from '@agent-device/kernel/contrac
 import { readMetroSessionHints, writeMetroSessionHints } from '../../metro/metro-session-hints.ts';
 import { openCommandFacet } from './app.ts';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
+import {
+  closeLoopbackServer,
+  listenOnLoopback,
+  skipWhenLoopbackUnavailable,
+} from '../../__tests__/test-utils/loopback.ts';
 
 function flags(overrides: Partial<CliFlags> = {}): CliFlags {
   return overrides as CliFlags;
@@ -65,6 +71,44 @@ describe('open startup budget', () => {
 });
 
 describe('open command metro session hints', () => {
+  test.for([false, true])(
+    'config defaults replace a stale binding only on a fresh open (reused=%s)',
+    async (sessionReused, t) => {
+      if (await skipWhenLoopbackUnavailable(t)) return;
+      const stateDir = tempStateDir();
+      const previous = createServer((_req, res) => res.end('PREVIOUS'));
+      const current = createServer((_req, res) => res.end('CURRENT'));
+      try {
+        const previousPort = await listenOnLoopback(previous);
+        const currentPort = await listenOnLoopback(current);
+        writeMetroSessionHints({
+          stateDir,
+          session: 'proj-a',
+          hints: {
+            controlBaseUrl: `http://127.0.0.1:${previousPort}/`,
+          },
+        });
+        const client = createAgentDeviceClient(
+          {
+            stateDir,
+            session: 'proj-a',
+            runtime: { metroHost: '127.0.0.1', metroPort: currentPort },
+          },
+          { transport: async () => ({ ok: true, data: { sessionReused } }) },
+        );
+        await client.apps.open({ app: 'MyApp' });
+        const result = await client.metro.reload();
+        expect(result.reloadUrl).toBe(
+          `http://127.0.0.1:${sessionReused ? previousPort : currentPort}/reload`,
+        );
+        expect(result.body).toBe(sessionReused ? 'PREVIOUS' : 'CURRENT');
+      } finally {
+        await closeLoopbackServer(previous);
+        await closeLoopbackServer(current);
+      }
+    },
+  );
+
   test('CLI parser accepts --metro-host/--metro-port/--bundle-url/--launch-url on open', () => {
     const parsed = parseArgs(
       [
@@ -165,9 +209,7 @@ describe('open command metro session hints', () => {
       await openCommandFacet.definition.invoke(client, cliInput);
 
       expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
-        metroHost: '127.0.0.1',
-        metroPort: 8082,
-        bundleUrl: 'http://127.0.0.1:8082/index.bundle',
+        controlBaseUrl: 'http://127.0.0.1:8082/',
       });
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
@@ -180,7 +222,7 @@ describe('open command metro session hints', () => {
       writeMetroSessionHints({
         stateDir,
         session: 'proj-a',
-        hints: { metroHost: '127.0.0.1', metroPort: 8083 },
+        hints: { controlBaseUrl: 'http://127.0.0.1:8083/' },
       });
       const { client } = createOpenClient({ stateDir, session: 'proj-a', sessionReused: false });
       await openCommandFacet.definition.invoke(
@@ -194,13 +236,25 @@ describe('open command metro session hints', () => {
     }
   });
 
+  test('open with only a Metro port binds reload to the local server on that port', async () => {
+    const stateDir = tempStateDir();
+    const { client } = createOpenClient({ stateDir, session: 'proj-a' });
+    await openCommandFacet.definition.invoke(
+      client,
+      openCommandFacet.cliReader(['MyApp'], flags({ metroPort: 8082 })),
+    );
+    expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
+      controlBaseUrl: 'http://localhost:8082/',
+    });
+  });
+
   test('a hintless open on an existing session keeps the current binding', async () => {
     const stateDir = tempStateDir();
     try {
       writeMetroSessionHints({
         stateDir,
         session: 'proj-a',
-        hints: { metroHost: '127.0.0.1', metroPort: 8083 },
+        hints: { controlBaseUrl: 'http://127.0.0.1:8083/' },
       });
       const { client } = createOpenClient({ stateDir, session: 'proj-a', sessionReused: true });
       await openCommandFacet.definition.invoke(
@@ -209,8 +263,7 @@ describe('open command metro session hints', () => {
       );
 
       expect(readMetroSessionHints({ stateDir, session: 'proj-a' })).toEqual({
-        metroHost: '127.0.0.1',
-        metroPort: 8083,
+        controlBaseUrl: 'http://127.0.0.1:8083/',
       });
     } finally {
       rmSync(stateDir, { recursive: true, force: true });

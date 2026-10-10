@@ -213,10 +213,15 @@ pnpm test-app:ios -- --device "<device name>" --port 8082
 pnpm test-app:android -- --device "$ANDROID_DEVICE" --port 8082
 ```
 
-After the development build is installed, keep using the same native app. The
-current `agent-device open` CLI does not accept `--metro-host` or `--metro-port`;
-open the app normally, then use the Metro command surface for Metro-specific
-actions:
+After the development build is installed, keep using the same native app. On an
+iOS simulator, `open` points this expo-dev-client at a Metro server through its
+`exp+agent-device-test-app://expo-development-client/?url=...` launch URL:
+
+```bash
+agent-device open com.callstack.agentdevicelab --platform ios --metro-host 127.0.0.1 --metro-port 8082
+```
+
+Use the Metro command surface for Metro-specific actions:
 
 ```bash
 agent-device metro prepare --project-root examples/test-app --kind expo --port 8082 --public-base-url http://127.0.0.1:8082
