@@ -239,13 +239,14 @@ export function validateAndNormalizeBatchSteps(
 
 /**
  * A batch step has no stdin of its own, and a failed step reports its positionals. The CLI refuses
- * `textStdin` on a step before reading stdin; this refuses it for every other daemon client.
+ * `textStdin: true` on a step before reading stdin; this refuses it for every other daemon client.
+ * `false` is the ordinary argv path, and a value of another type is refused per step by the router.
  */
 function assertNoTextStdinStep(
   flags: Record<string, unknown> | undefined,
   stepNumber: number,
 ): void {
-  if (flags?.textStdin === undefined) return;
+  if (flags?.textStdin !== true) return;
   throw new AppError(
     'INVALID_ARGS',
     `Batch step ${stepNumber}: fill textStdin is not supported because batch steps have no stdin of their own.`,

@@ -1,7 +1,8 @@
 /**
  * #3260: `fill --text-stdin` keeps the value out of argv, so it must not come back on the
- * response either. Sent through the real request handler to a web session, the narrowest
- * runtime that still runs the full fill admission, dispatch and response projection.
+ * response either, and neither may a replayed `--record-as` value. Sent through the real request
+ * handler to a web session, the narrowest runtime that still runs the full fill admission,
+ * dispatch and response projection.
  */
 import { expect, test } from 'vitest';
 import fs from 'node:fs';
@@ -16,6 +17,7 @@ import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import { makeAuthoringSession, makeSession } from '../../__tests__/test-utils/session-factories.ts';
 import { WEB_DESKTOP_DEVICE } from '../../__tests__/test-utils/device-fixtures.ts';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
+import { replayScriptSourceBundleFor } from '../../__tests__/test-utils/replay-script-source.ts';
 import {
   createPlatformRuntimeGateway,
   createRequestPlatformProviders,
@@ -205,4 +207,59 @@ test('a batch step carrying --text-stdin is refused before typing and returns no
   expect(result.error.details?.reason).toBe('fill_text_stdin_in_batch');
   expect(typed).toEqual([]);
   expect(JSON.stringify(result)).not.toContain(SECRET);
+});
+
+test('a replayed --record-as fill whose backend error echoes the value does not return it', async () => {
+  const flowPath = path.join(
+    mkdtempForTestSync('agent-device-router-replay-record-as-'),
+    'flow.ad',
+  );
+  fs.writeFileSync(flowPath, 'fill 10 20 "${PASSWORD}"\n');
+  const { response, typed } = sendToWebSession(
+    makeSession('web', { device: WEB_DESKTOP_DEVICE }),
+    {
+      command: 'replay',
+      positionals: [flowPath],
+      flags: {
+        replayEnv: [`PASSWORD=${SECRET}`],
+        replayScriptSource: replayScriptSourceBundleFor(flowPath),
+      },
+    },
+    (text) => new Error(`could not type "${text}" into the field`),
+  );
+
+  const result = await response;
+  expect(result.ok).toBe(false);
+  expect(typed).toEqual([SECRET]);
+  expect(JSON.stringify(result)).not.toContain(SECRET);
+  if (!result.ok) expect(result.error.message).toContain('could not type "${PASSWORD}"');
+});
+
+test('a batch fill step with textStdin false is dispatched like any fill', async () => {
+  const { response, typed } = sendToWebSession(makeSession('web', { device: WEB_DESKTOP_DEVICE }), {
+    command: 'batch',
+    positionals: [],
+    flags: {
+      batchSteps: [
+        { command: 'fill', positionals: ['10', '20', 'plain'], flags: { textStdin: false } },
+      ],
+    },
+  });
+
+  const result = await response;
+  expect(result.ok).toBe(true);
+  expect(typed).toEqual(['plain']);
+});
+
+test('a whitespace-only --text-stdin value collapses the error text it appears in', async () => {
+  const { response } = fillWithStdinText(
+    makeSession('web', { device: WEB_DESKTOP_DEVICE }),
+    {},
+    (text) => new Error(`could not type "${text}" into the field`),
+    ' ',
+  );
+
+  const result = await response;
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.message).toBe('[REDACTED]');
 });

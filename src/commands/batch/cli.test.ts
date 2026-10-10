@@ -457,5 +457,6 @@ test('batch passes an explicit fill textStdin false through to dispatch', async 
   ]);
 
   assert.equal(result.calls.length, 1);
+  assert.equal((result.calls[0]?.flags?.batchSteps ?? [])[0]?.flags?.textStdin, false);
   assert.doesNotMatch(result.stderr, /textStdin is not supported/);
 });

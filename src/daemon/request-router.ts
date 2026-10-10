@@ -61,6 +61,7 @@ import {
   sensitiveFillPlaceholder,
 } from '@agent-device/ad-script';
 import { createPlatformRequestScope } from './platform-request-scope.ts';
+import { parameterizeSensitiveString } from '@agent-device/selectors/parameterized-recorded-fill';
 import { createOwnerScopedDeviceClaimReconciler } from './device/device-claim-owner-recovery.ts';
 import { isConfinedToAppLease, scopeRequestSession } from './request-admission.ts';
 import { redactMacOsAppLeaseResponse } from './macos-app-lease.ts';
@@ -426,7 +427,11 @@ export function createRequestHandler(deps: RequestRouterDeps): DaemonInvokeFn {
       } catch (error) {
         response = finalizeThrownRequestError(error);
       }
-      return await finalizeRequestBindingCleanup(childScope, response);
+      // This entry point registers a sensitive fill too, so it redacts that fill's error as well.
+      return redactSensitiveFillResponse(
+        req,
+        await finalizeRequestBindingCleanup(childScope, response),
+      );
     };
   }
 
@@ -544,7 +549,8 @@ const ERROR_TEXT_FIELDS: ReadonlySet<string> = new Set(['message', 'hint', 'caus
 function redactSensitiveFillTextInError(req: DaemonRequest, error: DaemonError): DaemonError {
   const text = sensitiveFillText(req);
   if (!text) return error;
-  const replace = (value: string) => value.replaceAll(text, sensitiveFillPlaceholder(req.flags));
+  const placeholder = sensitiveFillPlaceholder(req.flags);
+  const replace = (value: string) => parameterizeSensitiveString(value, text, placeholder);
   return Object.fromEntries(
     Object.entries(error).map(([field, value]) => [
       field,
@@ -558,8 +564,14 @@ function mapErrorStrings(value: unknown, replace: (value: string) => string): un
   if (Array.isArray(value)) return value.map((entry) => mapErrorStrings(entry, replace));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, mapErrorStrings(entry, replace)]),
+    Object.entries(value).map(([key, entry]) => [replace(key), mapErrorStrings(entry, replace)]),
   );
+}
+
+function redactSensitiveFillResponse(req: DaemonRequest, response: DaemonResponse): DaemonResponse {
+  return response.ok
+    ? response
+    : { ...response, error: redactSensitiveFillTextInError(req, response.error) };
 }
 
 async function dispatchGenericForLockedScope(params: {

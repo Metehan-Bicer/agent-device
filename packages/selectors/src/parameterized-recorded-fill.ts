@@ -362,7 +362,11 @@ function filterSensitiveSelectorCandidates(
   return value.filter((candidate) => !carries(candidate));
 }
 
-function parameterizeSensitiveString(value: string, literal: string, placeholder: string): string {
+export function parameterizeSensitiveString(
+  value: string,
+  literal: string,
+  placeholder: string,
+): string {
   // The empty literal (`fill <target> "" --record-as VAR`, #2063) matches inside every string:
   // it reveals nothing if echoed, so it redacts nothing. Only the fill's own semantic `text`
   // field is force-parameterized, by `parameterizeRecordedFillPayload`, not here.
