@@ -1,12 +1,14 @@
-import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 /**
  * #3260: `fill --text-stdin` keeps the value out of argv, so it must not come back on the
  * response either. Sent through the real request handler to a web session, the narrowest
  * runtime that still runs the full fill admission, dispatch and response projection.
  */
 import { expect, test } from 'vitest';
+import fs from 'node:fs';
 import path from 'node:path';
+import { createTestDeviceInventoryGateways } from '../../__tests__/test-utils/device-inventory-gateways.ts';
 import type { WebProvider } from '@agent-device/platform-web';
+import type { DaemonRequest } from '../daemon-request.ts';
 import type { SessionState } from '../session-state.ts';
 import { createRequestHandler } from './test-device-runtime-gateway.ts';
 import { LeaseRegistry } from '../lease-registry.ts';
@@ -24,6 +26,19 @@ const SECRET = 'stdin-s3cret-value';
 function fillWithStdinText(
   session: SessionState,
   flags: Record<string, unknown> = {},
+  fillFails?: (text: string) => Error,
+  text = SECRET,
+) {
+  return sendToWebSession(
+    session,
+    { command: 'fill', positionals: ['10', '20', text], flags: { textStdin: true, ...flags } },
+    fillFails,
+  );
+}
+
+function sendToWebSession(
+  session: SessionState,
+  request: Pick<DaemonRequest, 'command' | 'positionals' | 'flags'>,
   fillFails?: (text: string) => Error,
 ) {
   const sessionStore = makeSessionStore('agent-device-router-fill-text-stdin-');
@@ -65,9 +80,7 @@ function fillWithStdinText(
   const response = handler({
     token: 'test-token',
     session: session.name,
-    command: 'fill',
-    positionals: ['10', '20', SECRET],
-    flags: { textStdin: true, ...flags },
+    ...request,
     meta: { requestId: 'req-fill-text-stdin' },
   });
   return { response, typed, sessionStore };
@@ -141,4 +154,55 @@ test('a backend error that echoes the --text-stdin value does not return it', as
   expect(typed).toEqual([SECRET]);
   expect(JSON.stringify(result)).not.toContain(SECRET);
   if (!result.ok) expect(result.error.message).toBe('could not type "[REDACTED]" into the field');
+});
+
+test('a backend error that echoes a --record-as stdin value shows its placeholder', async () => {
+  const { response, typed } = fillWithStdinText(
+    makeAuthoringSession('web', { device: WEB_DESKTOP_DEVICE }),
+    { recordAs: 'PASSWORD' },
+    (text) => new Error(`could not type "${text}" into the field`),
+  );
+
+  const result = await response;
+  expect(result.ok).toBe(false);
+  expect(typed).toEqual([SECRET]);
+  if (!result.ok) expect(result.error.message).toBe('could not type "${PASSWORD}" into the field');
+});
+
+test('a short --text-stdin value is redacted from the error text but not from its log path', async () => {
+  // `stdin` also appears in this request's id, which names its diagnostics file.
+  const { response } = fillWithStdinText(
+    makeSession('web', { device: WEB_DESKTOP_DEVICE }),
+    {},
+    (text) => new Error(`could not type "${text}" into the field`),
+    'stdin',
+  );
+
+  const result = await response;
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.message).toBe('could not type "[REDACTED]" into the field');
+  expect(result.error.logPath).toContain('req-fill-text-stdin');
+  expect(fs.existsSync(result.error.logPath!)).toBe(true);
+  expect(result.error.diagnosticsRecord?.requestId).toBe('req-fill-text-stdin');
+});
+
+test('a batch step carrying --text-stdin is refused before typing and returns no part of the value', async () => {
+  const { response, typed } = sendToWebSession(makeSession('web', { device: WEB_DESKTOP_DEVICE }), {
+    command: 'batch',
+    positionals: [],
+    flags: {
+      batchSteps: [
+        { command: 'fill', positionals: ['10', '20', SECRET], flags: { textStdin: true } },
+      ],
+    },
+  });
+
+  const result = await response;
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.code).toBe('INVALID_ARGS');
+  expect(result.error.details?.reason).toBe('fill_text_stdin_in_batch');
+  expect(typed).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain(SECRET);
 });

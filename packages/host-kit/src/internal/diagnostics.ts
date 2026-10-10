@@ -108,16 +108,6 @@ export function registerDiagnosticSensitiveValue(value: string): void {
 }
 
 /**
- * Replace this request's registered sensitive values in `input`, as its diagnostics already do. For
- * an error leaving the daemon: a backend message can echo a value the caller kept out of argv.
- */
-export function redactRegisteredSensitiveValues<T>(input: T): T {
-  const scope = diagnosticsStorage.getStore();
-  if (!scope || scope.sensitiveValues.size === 0) return input;
-  return replaceSensitiveValues(input, sortedScopeSensitiveValues(scope)) as T;
-}
-
-/**
  * Sum the number of diagnostic events emitted in the current scope whose phase
  * is one of `phases`. Backed by the flush-surviving `phaseCounts` tally, so it
  * stays accurate for the whole request even under `--debug` (where `events` is

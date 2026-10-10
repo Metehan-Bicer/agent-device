@@ -32,6 +32,15 @@ export function isSensitiveFillText<TFlags extends Pick<CommandFlags, 'recordAs'
   return typeof flags?.recordAs === 'string' || flags?.textStdin === true;
 }
 
+/** What sensitive fill text reads as on any response: its `--record-as` placeholder, else `[REDACTED]`. */
+export function sensitiveFillPlaceholder(
+  flags: Pick<CommandFlags, 'recordAs'> | undefined,
+): string {
+  return typeof flags?.recordAs === 'string'
+    ? recordedInputPlaceholder(flags.recordAs)
+    : '[REDACTED]';
+}
+
 export function recordedInputPlaceholder(variableName: string): string {
   return `\${${variableName}}`;
 }

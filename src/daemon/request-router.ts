@@ -37,7 +37,6 @@ import {
   emitDiagnostic,
   flushDiagnosticsToSessionFile,
   getDiagnosticsMeta,
-  redactRegisteredSensitiveValues,
   registerDiagnosticSensitiveValue,
   withDiagnosticsScope,
 } from '@agent-device/host-kit/diagnostics';
@@ -56,7 +55,11 @@ import {
 import { unsupportedSaveScriptFlagResponse } from './request-save-script-policy.ts';
 import { canRunReplayScopedAction } from './daemon-command-registry.ts';
 import { isWebSession } from './web-session-names.ts';
-import { inferFillText, isSensitiveFillText } from '@agent-device/ad-script';
+import {
+  inferFillText,
+  isSensitiveFillText,
+  sensitiveFillPlaceholder,
+} from '@agent-device/ad-script';
 import { createPlatformRequestScope } from './platform-request-scope.ts';
 import { createOwnerScopedDeviceClaimReconciler } from './device/device-claim-owner-recovery.ts';
 import { isConfinedToAppLease, scopeRequestSession } from './request-admission.ts';
@@ -208,7 +211,10 @@ export function createRequestHandler(deps: RequestRouterDeps): DaemonInvokeFn {
             repairExpiredIfTombstoned(req, response.error, sessionStore),
             sessionStore,
           );
-          return { ok: false, error: redactRegisteredSensitiveValues(enrichDaemonError(error)) };
+          return {
+            ok: false,
+            error: redactSensitiveFillTextInError(req, enrichDaemonError(error)),
+          };
         }
         // Phase 4 (agent-cost) grafts on the success path. Runs inside the
         // diagnostics scope so cost can read this request's runner-round-trip tally.
@@ -511,15 +517,48 @@ function customActionFlagsResponse(req: DaemonRequest): DaemonResponse | undefin
   return undefined;
 }
 
+/** The text of a fill the caller marked sensitive, or `undefined` for any other request. */
+function sensitiveFillText(req: DaemonRequest): string | undefined {
+  if (req.command !== 'fill' || !isSensitiveFillText(req.flags)) return undefined;
+  return inferFillText({
+    ts: 0,
+    command: 'fill',
+    positionals: req.positionals ?? [],
+    flags: req.flags,
+  });
+}
+
 function registerParameterizedFillDiagnosticValue(req: DaemonRequest): void {
-  if (req.command !== 'fill' || !isSensitiveFillText(req.flags)) return;
-  registerDiagnosticSensitiveValue(
-    inferFillText({
-      ts: 0,
-      command: 'fill',
-      positionals: req.positionals ?? [],
-      flags: req.flags,
-    }),
+  const text = sensitiveFillText(req);
+  if (text !== undefined) registerDiagnosticSensitiveValue(text);
+}
+
+/** Error fields that carry text a backend may have built from the value it was typing. */
+const ERROR_TEXT_FIELDS: ReadonlySet<string> = new Set(['message', 'hint', 'cause', 'details']);
+
+/**
+ * A backend error can quote the text a sensitive fill failed to type. Only that fill's own text is
+ * redacted, and only in the error's text fields: `logPath`, `diagnosticId` and the other
+ * daemon-owned fields come back as they are, and so does every other request's error.
+ */
+function redactSensitiveFillTextInError(req: DaemonRequest, error: DaemonError): DaemonError {
+  const text = sensitiveFillText(req);
+  if (!text) return error;
+  const replace = (value: string) => value.replaceAll(text, sensitiveFillPlaceholder(req.flags));
+  return Object.fromEntries(
+    Object.entries(error).map(([field, value]) => [
+      field,
+      ERROR_TEXT_FIELDS.has(field) ? mapErrorStrings(value, replace) : value,
+    ]),
+  ) as DaemonError;
+}
+
+function mapErrorStrings(value: unknown, replace: (value: string) => string): unknown {
+  if (typeof value === 'string') return replace(value);
+  if (Array.isArray(value)) return value.map((entry) => mapErrorStrings(entry, replace));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, mapErrorStrings(entry, replace)]),
   );
 }
 
