@@ -8,15 +8,22 @@ const processState = vi.hoisted(() => ({
   alive: new Set<number>(),
   starts: new Map<number, string>(),
   commands: new Map<number, string>(),
+  zombiePids: new Set<number>(),
   waitExits: true,
 }));
 
 vi.mock('./host-process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./host-process.ts')>()),
   isProcessAlive: (pid: number) => processState.alive.has(pid),
-  isProcessZombie: () => false,
+  isProcessZombie: (pid: number) => processState.zombiePids.has(pid),
   readProcessStartTime: (pid: number) => processState.starts.get(pid) ?? null,
   readProcessCommand: (pid: number) => processState.commands.get(pid) ?? null,
+  readProcessIdentityFacts: (pid: number) =>
+    Promise.resolve({
+      startTime: processState.starts.get(pid) ?? null,
+      command: processState.commands.get(pid) ?? null,
+      zombie: processState.zombiePids.has(pid) ? true : processState.alive.has(pid) ? false : null,
+    }),
   waitForProcessExit: async (pid: number) => {
     if (processState.waitExits) processState.alive.delete(pid);
     return true;
@@ -30,6 +37,7 @@ beforeEach(() => {
   processState.alive.clear();
   processState.starts.clear();
   processState.commands.clear();
+  processState.zombiePids.clear();
   processState.waitExits = true;
 });
 
@@ -152,6 +160,42 @@ test('startup interrupts an exact simctl recorder before clearing its record', a
     await reapOwnedProcessRecordsAtStartup(store, { termTimeoutMs: 1, killTimeoutMs: 1 });
 
     assert.deepEqual(signals, ['SIGINT']);
+    assert.equal(store.read().length, 0);
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('startup treats a zombie identity as missing without signaling it', async () => {
+  // The reaper asks one identity read the zombie question, and a zombie has
+  // already terminated: it is cleaned as missing, never signaled. Before this
+  // case the fixture could seed zombiePids but never did, so every facts.zombie
+  // branch ran uncovered.
+  const stateDir = mkdtempForTestSync('agent-device-owned-process-zombie-reap-');
+  const store = createOwnedProcessRecordStore({
+    stateDir,
+    sessionsDir: path.join(stateDir, 'sessions'),
+    resolveSessionDir: (sessionId) => path.join(stateDir, 'sessions', sessionId),
+  });
+  const record = {
+    pid: 303,
+    startTime: 'start-303',
+    command: 'command-303',
+    purpose: 'managed-web-browser',
+  };
+  processState.alive.add(record.pid);
+  processState.zombiePids.add(record.pid);
+  processState.starts.set(record.pid, record.startTime);
+  processState.commands.set(record.pid, record.command);
+  const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+  try {
+    store.replace({ kind: 'daemon' }, [record]);
+
+    const summary = await reapOwnedProcessRecordsAtStartup(store);
+
+    assert.deepEqual(summary.missingPids, [record.pid]);
+    assert.equal(killSpy.mock.calls.length, 0);
     assert.equal(store.read().length, 0);
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });

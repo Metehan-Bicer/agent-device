@@ -140,12 +140,16 @@ export function issueSettleRefs(
 /**
  * ADR 0014's issuance rule for ambiguity refusals: a response that prints
  * candidate `@ref`s must be able to ISSUE them, and issuance is only ever
- * valid against the tree the session's generation describes. Every route
- * that can answer `AMBIGUOUS_MATCH` with candidates runs its error through
- * here — the acting touch runtime (`press`/`click`/`fill`) and the strict-read
- * dispatches (`is`, `get attrs`) — so the rule has
- * one implementation beside the partial-frame primitive it wraps, exactly
- * like {@link issueSettleRefs}.
+ * valid against the tree the session's generation describes. The routes that
+ * owe that contract run their error through here — the acting touch runtime
+ * (`press`/`click`/`fill`) and the strict-read dispatches (`is`, `get attrs`)
+ * — so the rule has one implementation beside the partial-frame primitive it
+ * wraps, exactly like {@link issueSettleRefs}. The `find` refusal
+ * (`buildAmbiguousMatchError`) deliberately does NOT consume this rule: it
+ * predates it (#1597), prints no `refsGeneration`, and its hint routes the
+ * caller to narrow the locator; unlike this rule, it does not pin the printed
+ * candidate refs to a generation. Making those refs issuable is a separate
+ * contract decision.
  *
  * The two branches are one decision, not two features:
  * - The request's consumed capture IS the session's stored tree (node

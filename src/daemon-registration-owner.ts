@@ -167,9 +167,42 @@ function writeShutdownReport(
   }
 }
 
-/** The daemon's stdout and stderr append to this inode, so it is emptied in place, never replaced. */
+/**
+ * The daemon's stdout and stderr append to this inode, so it is emptied in place, never
+ * replaced. On POSIX the append handle that creates the file also permits truncation, and
+ * keeping that one handle open for the whole operation is what pins the inode. A Windows
+ * handle opened append-only (`'a'`) rejects `ftruncate` with EPERM, so that host empties the
+ * log through a read-write handle instead (#3291). A failure at any step propagates: an
+ * unreadable log must fail startup loudly.
+ */
 function truncateDaemonLog(logPath: string): void {
+  if (process.platform === 'win32') {
+    truncateDaemonLogOnWindowsHost(logPath);
+    return;
+  }
   const descriptor = fs.openSync(logPath, 'a', 0o600);
+  try {
+    fs.ftruncateSync(descriptor, 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/**
+ * `ftruncate` on Windows requires a handle opened for writing beyond append. An existing log
+ * is opened `'r+'` directly, so no window exists between handles on the common path; a
+ * missing log is first created through `'a'` and then reopened, and a creation race against
+ * that reopen surfaces as this startup failing rather than a silently unemptied log.
+ */
+function truncateDaemonLogOnWindowsHost(logPath: string): void {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(logPath, 'r+', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    fs.closeSync(fs.openSync(logPath, 'a', 0o600));
+    descriptor = fs.openSync(logPath, 'r+', 0o600);
+  }
   try {
     fs.ftruncateSync(descriptor, 0);
   } finally {

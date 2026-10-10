@@ -26,7 +26,10 @@ import { handleInteractionCommands } from '../interaction/index.ts';
 // resolving against the earlier tree, where the same body names a different
 // node. The candidate either acts on the listed node or is refused.
 
-const { mockRunAppleRunnerCommand } = vi.hoisted(() => ({ mockRunAppleRunnerCommand: vi.fn() }));
+const { mockRunAppleRunnerCommand, mockCaptureSnapshotWithInteractor } = vi.hoisted(() => ({
+  mockRunAppleRunnerCommand: vi.fn(),
+  mockCaptureSnapshotWithInteractor: vi.fn(),
+}));
 
 vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agent-device/platform-android/mechanics')>();
@@ -38,9 +41,10 @@ vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
   };
 });
 
-vi.mock('../snapshot-interactor-capture.ts', () => ({
-  captureSnapshotWithInteractor: vi.fn(),
-}));
+vi.mock('../snapshot-interactor-capture.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../snapshot-interactor-capture.ts')>();
+  return { ...actual, captureSnapshotWithInteractor: mockCaptureSnapshotWithInteractor };
+});
 
 vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal) => {
   const actual =
@@ -52,6 +56,7 @@ beforeEach(() => {
   resetGetRuntimeFixture();
   mockRunAppleRunnerCommand.mockReset();
   mockRunAppleRunnerCommand.mockResolvedValue({});
+  mockCaptureSnapshotWithInteractor.mockReset();
 });
 
 function isRequest(session: string, positionals: readonly string[]): DaemonRequest {
@@ -232,4 +237,79 @@ test('an ambiguous is on a sparse capture prints no candidates and issues nothin
   // was left alone rather than reissued over a tree that was never stored.
   expect(session.snapshot!.nodes).toBe(storedNodes);
   expect(refFrameScope(session)).toBe('all');
+});
+
+/**
+ * The acting route's own coverage of the issuance rule: an ambiguous
+ * `press` (never an `is`-minted ref) must ITSELF issue the candidates it
+ * prints. Deleting the touch runtime's consumed-capture slot would silently
+ * degrade every press/fill ambiguity to count-only if nothing pinned this;
+ * the `is` tests above travel the selector-route seam, not this one.
+ */
+test('an ambiguous press issues its printed candidates from its own capture', async () => {
+  const sessionStore = makeSessionStore();
+  const sessionName = 'press-ambiguity-issuance';
+  const session = makeStaleRefSession(sessionName);
+  session.device = IOS_SIMULATOR;
+  sessionStore.publish(sessionName, session);
+
+  // The press's own capture: two same-label buttons in DISTINCT branches, so
+  // the acting pipeline's candidate classification refuses to collapse them
+  // and throws AMBIGUOUS_MATCH with candidate lines. Raw nodes: the capture
+  // path attaches refs itself (e1 root, e2/e3 the buttons).
+  mockCaptureSnapshotWithInteractor.mockResolvedValue({
+    nodes: [
+      { index: 0, type: 'Application', rect: { x: 0, y: 0, width: 390, height: 844 } },
+      {
+        index: 1,
+        parentIndex: 0,
+        type: 'XCUIElementTypeButton',
+        label: 'Deploy',
+        rect: { x: 300, y: 300, width: 20, height: 20 },
+        enabled: true,
+        hittable: true,
+      },
+      {
+        index: 2,
+        parentIndex: 0,
+        type: 'XCUIElementTypeButton',
+        label: 'Deploy',
+        rect: { x: 500, y: 500, width: 20, height: 20 },
+        enabled: true,
+        hittable: true,
+      },
+    ],
+    backend: 'xctest',
+    producer: 'apple-runner',
+  });
+
+  const response = await handleInteractionCommands({
+    req: {
+      token: 't',
+      session: sessionName,
+      command: 'press',
+      positionals: ['label="Deploy"'],
+      flags: {},
+    },
+    sessionName,
+    sessionStore,
+    contextFromFlags,
+    ...getRuntimeBindings(),
+  });
+
+  expect(response?.ok).toBe(false);
+  if (!response || response.ok) throw new Error('expected the acting ambiguity refusal');
+  expect(response.error.code).toBe('AMBIGUOUS_MATCH');
+  // The acting refusal owes the same contract the read refusal gives: the
+  // printed candidates are ISSUED refs pinned to the generation of the
+  // capture the press itself consumed, not a count-only degradation.
+  const refsGeneration = response.error.details?.refsGeneration as number;
+  expect(typeof refsGeneration).toBe('number');
+  const candidates = response.error.details?.candidates as string[];
+  expect(candidates.length).toBeGreaterThan(0);
+  expect([...refFrameScope(session)].sort()).toEqual(
+    candidates.map((line) => /^@(e\d+)/.exec(line)![1]),
+  );
+  // Nothing was tapped: the refusal preceded dispatch.
+  expect(mockTapPoint).not.toHaveBeenCalled();
 });

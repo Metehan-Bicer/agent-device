@@ -11,6 +11,21 @@ vi.mock('./host-process.ts', () => ({
   isProcessAlive: mockIsProcessAlive,
   isProcessZombie: mockIsProcessZombie,
   readProcessStartTime: mockReadProcessStartTime,
+  // The classification consumes one snapshot, so the fixture answers it from
+  // the same state as the per-field probes and drops rows whose start time the
+  // host could not read.
+  readHostProcessIdentityObservations: (pids: Iterable<number>) => {
+    const observations = new Map<number, { state: string; startTime: string }>();
+    for (const pid of pids) {
+      const startTime = mockReadProcessStartTime(pid);
+      if (startTime === null) continue;
+      observations.set(pid, {
+        state: mockIsProcessZombie(pid) ? 'ZN' : 'Ss',
+        startTime,
+      });
+    }
+    return observations;
+  },
 }));
 
 import { classifyOwnerLiveness, classifyOwnerLivenessFromObservation } from './owner-identity.ts';
@@ -68,4 +83,12 @@ test('a pid outside the native range is unknown without a liveness probe', () =>
   assert.equal(mockIsProcessAlive.mock.calls.length, 0);
   assert.equal(mockIsProcessZombie.mock.calls.length, 0);
   assert.equal(mockReadProcessStartTime.mock.calls.length, 0);
+});
+
+test('the snapshot path probes liveness for the owner pid exactly once', () => {
+  // The guards were once duplicated across the snapshot entry and the shared
+  // judge, paying two kill(pid, 0) per poll on the very path whose single
+  // snapshot exists to stop double probing.
+  assert.equal(classifyOwnerLiveness({ owner: { pid: OWNER_PID, startTime: 'start-a' } }), 'live');
+  assert.equal(mockIsProcessAlive.mock.calls.length, 1);
 });

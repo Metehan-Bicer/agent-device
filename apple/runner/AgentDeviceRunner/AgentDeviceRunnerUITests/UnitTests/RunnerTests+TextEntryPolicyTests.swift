@@ -128,6 +128,21 @@ extension RunnerTests {
     }
   }
 
+  // A synthesized replacement has no element-bound baseline for unconfirmed evidence.
+  func testSynthesizedReplacementCommitStillRefusesACompletingFormattedValue() {
+    let clock = CommitWaitClock()
+    let outcome = Self.awaitSynthesizedReplacementCommitOutcome(
+      expectedText: "000629177",
+      placeholder: nil,
+      stallBudget: 2,
+      ceiling: 10,
+      now: clock.read,
+      observe: { "00 062 91 77" },
+      waitForNextObservation: { clock.advance(1) }
+    )
+    XCTAssertEqual(outcome, .notObserved)
+  }
+
   // The non-failure counterpart: replacement mode must still tolerate real commit lag (the value
   // converges to an exact match over a few polls), not just instant matches.
   func testSynthesizedReplacementCommitToleratesLagUntilExactMatch() {

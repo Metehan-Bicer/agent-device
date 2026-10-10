@@ -742,7 +742,8 @@ Rules:
   Context menus are not ambient UI: secondary-click a visible target, then re-snapshot and use the new menu-item refs.
   Do not let iOS simulator-set scoping hide macOS desktop targets.
   Prefer refs/selectors over raw coordinates.
-  macOS snapshot rects are window-space; use current refs or overlay refs instead of guessing coordinates.`,
+  macOS snapshot rects are window-space; use current refs or overlay refs instead of guessing coordinates.
+  On the default XCTest backend a read (snapshot, get, find) of a session app that sits behind other windows is answered from where it sits, without raising the app; interactions and a window-level screenshot of that app still bring it forward.`,
   },
   web: {
     summary: 'Minimal browser workflow with the managed web backend',

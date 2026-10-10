@@ -66,6 +66,9 @@ enum CommandLaunchPolicy: Equatable {
   /// enforced on iOS only: `notRunningRefusal` is `#if os(iOS)`, the platform that can read an app's
   /// state without launching it. Off iOS these commands keep the activation route they had before
   /// this axis existed, and no refusal can occur there.
+  /// On macOS the policy also decides the foreground question: a read of an app that is running
+  /// behind other windows is served in place without raising it, while a stopped app keeps the
+  /// activating route's launch (#3254; record in #3338).
   case existingApp
   /// Brings the app forward, which bare-launches it when it is not running.
   case mayLaunch

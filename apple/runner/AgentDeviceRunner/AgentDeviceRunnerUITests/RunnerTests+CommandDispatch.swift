@@ -536,12 +536,27 @@ extension RunnerTests {
 #else
       // The platform exception, written once: `SystemSurfaceHostRegistry` registers no hosts off iOS,
       // so nothing is ever served in place there and such a command keeps the activation route this
-      // axis found it on.
+      // axis found it on. The host never sends either command here on macOS — `alert` answers through
+      // the helper and `action-button` is refused by its owner fact before dispatch — so off iOS this
+      // route is reached only by the tvOS and visionOS runners.
       return prepareActivatedTarget(command: command)
 #endif
     case .existingApp:
       // No request-dependent bypass here: it decides by querying the cached target's state, and a
       // command that may bring nothing forward has nothing for it to settle.
+#if os(macOS)
+      if let bundleId = command.appBundleId?.trimmedNonEmpty,
+        macReadMayBeServedInBackground(
+          command: command,
+          targetState: XCUIApplication(bundleIdentifier: bundleId).state
+        )
+      {
+        // Identity first, through the shared rule: a served read must answer the process a bound
+        // read would have read, not a pid an outside relaunch replaced.
+        refreshCachedTargetIfProcessChanged(bundleId: bundleId)
+        return .context(ActiveCommandContext(app: resolveAppWithoutActivation(command: command)))
+      }
+#endif
       return prepareActivatedTarget(command: command)
     case .mayLaunch:
       if shouldSkipAppActivationPreflight(command) {
@@ -774,5 +789,17 @@ extension RunnerTests {
       return boundApp
     }
     return XCUIApplication(bundleIdentifier: bundleId)
+  }
+
+  /// A macOS `.existingApp` read is served in place only for `.runningBackground`: the one state
+  /// whose tree answers while the app sits behind other windows. Every other state keeps the
+  /// activating route, matching `targetNeedsActivation`'s macOS set, and serving in place books no
+  /// activation fact or marker — the fact channel records only a repair performed, so a served
+  /// read answers as an ordinary read (#3254; decision record in #3338).
+  ///
+  /// The probe handle must be fresh, not cached: a cached handle can address a pid an outside
+  /// relaunch replaced, whose `.state` would answer for the dead process.
+  func macReadMayBeServedInBackground(command: Command, targetState: XCUIApplication.State) -> Bool {
+    command.appBundleId?.trimmedNonEmpty != nil && targetState == .runningBackground
   }
 }

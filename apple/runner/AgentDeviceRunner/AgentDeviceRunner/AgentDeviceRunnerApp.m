@@ -71,6 +71,7 @@ int main(int argc, const char *argv[]) {
 // took focus from an input that has stopped answering the accessibility query that found it.
 @property(nonatomic, strong) UILabel *textEntryFocusWitness;
 @property(nonatomic, assign) NSUInteger textEntryWriteBacks;
+@property(nonatomic, assign) NSUInteger textEntryTotalEdits;
 @property(nonatomic, copy, nullable) NSString *textEntryRenderedValue;
 @property(nonatomic, assign) NSTimeInterval textEntryLastEditTime;
 @property(nonatomic, assign) NSTimeInterval textEntryBurstStartTime;
@@ -95,6 +96,122 @@ int main(int argc, const char *argv[]) {
 @implementation AgentDeviceDigitCountTextField
 - (NSString *)accessibilityValue {
   return [NSString stringWithFormat:@"%lu of 6 digits", (unsigned long)self.text.length];
+}
+@end
+
+// A field that reformats its own text on every edit into `## ### ## ##` digit groups, the way a
+// digit-grouping formatter in a Flutter or React Native input does. The accessibility value is
+// what the user sees — the formatted string — so it never equals the digits a `fill` sent (#2634).
+// The field owns the delegate it installs, keeping the formatter out of the view controller's
+// own delegate callbacks.
+@interface AgentDeviceDigitGroupingTextField : UITextField <UITextFieldDelegate>
+@end
+
+@interface AgentDeviceCurrencyTextField : UITextField <UITextFieldDelegate>
+@property(nonatomic, strong) UILabel *entryStatus;
+@property(nonatomic, assign) NSUInteger insertedDigits;
+@end
+
+@interface AgentDeviceSubmitClearingTextField : UITextField <UITextFieldDelegate>
+@property(nonatomic, strong) UILabel *entryStatus;
+@property(nonatomic, assign) NSUInteger submits;
+@end
+
+static NSString *AgentDeviceFormatGroupedDigits(NSString *raw) {
+  NSMutableString *digits = [NSMutableString string];
+  NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+  for (NSString *chunk in [raw componentsSeparatedByCharactersInSet:nonDigits]) {
+    [digits appendString:chunk];
+  }
+  NSMutableArray<NSNumber *> *groupWidths = [NSMutableArray arrayWithArray:@[@2, @3, @2, @2]];
+  NSMutableString *formatted = [NSMutableString string];
+  NSUInteger cursor = 0;
+  for (NSNumber *width in groupWidths) {
+    if (cursor >= digits.length) {
+      break;
+    }
+    if (formatted.length > 0) {
+      [formatted appendString:@" "];
+    }
+    NSUInteger end = MIN(cursor + width.unsignedIntegerValue, digits.length);
+    [formatted appendString:[digits substringWithRange:NSMakeRange(cursor, end - cursor)]];
+    cursor = end;
+  }
+  // Digits past the last group keep grouping by threes rather than vanishing from the field.
+  while (cursor < digits.length) {
+    NSUInteger end = MIN(cursor + 3, digits.length);
+    [formatted appendString:[NSString stringWithFormat:@" %@", [digits substringWithRange:NSMakeRange(cursor, end - cursor)]]];
+    cursor = end;
+  }
+  return formatted;
+}
+
+static NSUInteger AgentDeviceDigitCount(NSString *text, NSUInteger limit) {
+  NSUInteger count = 0;
+  for (NSUInteger index = 0; index < limit && index < text.length; index++) {
+    if ([NSCharacterSet.decimalDigitCharacterSet characterIsMember:[text characterAtIndex:index]]) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+@implementation AgentDeviceDigitGroupingTextField
+- (BOOL)textField:(UITextField *)textField
+      shouldChangeCharactersInRange:(NSRange)range
+               replacementString:(NSString *)string {
+  NSString *combined = [textField.text stringByReplacingCharactersInRange:range withString:string];
+  NSString *formatted = AgentDeviceFormatGroupedDigits(combined);
+  textField.text = formatted;
+  // Assigning `text` drops the caret at the end, which a real grouping formatter does not do:
+  // a mid-string edit must keep editing where the user put the caret. The digits before the
+  // caret survive the reformat unchanged, so the caret belongs before the digit that follows
+  // them — past the separators the grouping inserted behind them — and at the end when it
+  // followed all of them. Typed digits count as before the caret; a delete does not move it.
+  NSUInteger digitsBeforeCaret =
+      AgentDeviceDigitCount(textField.text, range.location) + AgentDeviceDigitCount(string, string.length);
+  NSUInteger caretOffset = formatted.length;
+  NSUInteger seen = 0;
+  for (NSUInteger index = 0; index < formatted.length; index++) {
+    if (![NSCharacterSet.decimalDigitCharacterSet characterIsMember:[formatted characterAtIndex:index]]) {
+      continue;
+    }
+    seen += 1;
+    if (seen == digitsBeforeCaret + 1) {
+      caretOffset = index;
+      break;
+    }
+  }
+  textField.selectedTextRange = [textField textRangeFromPosition:[textField positionFromPosition:textField.beginningOfDocument offset:caretOffset]
+                                                      toPosition:[textField positionFromPosition:textField.beginningOfDocument offset:caretOffset]];
+  return NO;
+}
+@end
+
+@implementation AgentDeviceCurrencyTextField
+- (BOOL)textField:(UITextField *)textField
+      shouldChangeCharactersInRange:(NSRange)range
+               replacementString:(NSString *)string {
+  NSString *combined = [textField.text stringByReplacingCharactersInRange:range withString:string];
+  NSMutableString *digits = [NSMutableString string];
+  for (NSString *part in [combined componentsSeparatedByCharactersInSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet]) {
+    [digits appendString:part];
+  }
+  unsigned long long cents = digits.longLongValue;
+  textField.text = [NSString stringWithFormat:@"$%llu.%02llu", cents / 100, cents % 100];
+  self.insertedDigits += AgentDeviceDigitCount(string, string.length);
+  self.entryStatus.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.insertedDigits];
+  textField.selectedTextRange = [textField textRangeFromPosition:textField.endOfDocument toPosition:textField.endOfDocument];
+  return NO;
+}
+@end
+
+@implementation AgentDeviceSubmitClearingTextField
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+  self.submits += 1;
+  self.entryStatus.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.submits];
+  textField.text = @"";
+  return YES;
 }
 @end
 #endif
@@ -202,11 +319,12 @@ static NSTimeInterval AgentDeviceAlertActivationBusyWindow(void) {
 - (void)updateTextEntryWriteBackStatus {
   NSTimeInterval burstSpan = self.textEntryLastEditTime - self.textEntryBurstStartTime;
   self.textEntryWriteBackStatus.text = [NSString
-    stringWithFormat:@"write-backs=%lu burst-edits=%lu burst-ms=%lu min-gap-ms=%lu",
+    stringWithFormat:@"write-backs=%lu burst-edits=%lu burst-ms=%lu min-gap-ms=%lu total-edits=%lu",
                      (unsigned long)self.textEntryWriteBacks,
                      (unsigned long)self.textEntryBurstEdits,
                      (unsigned long)llround(burstSpan * 1000),
-                     (unsigned long)llround(self.textEntryBurstMinGap * 1000)];
+                     (unsigned long)llround(self.textEntryBurstMinGap * 1000),
+                     (unsigned long)self.textEntryTotalEdits];
 }
 
 - (void)presentAlertFixtureReplacement:(BOOL)replacement {
@@ -292,6 +410,7 @@ static const CGFloat AgentDeviceTextEntryNeighbourGap = 16;
   // typed faster than the app renders loses the characters that arrived while a render was in
   // flight, and the field settles stable short of the request.
   if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-app-owned-value"]) {
+    self.textEntryTotalEdits += 1;
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     NSTimeInterval gap = now - self.textEntryLastEditTime;
     BOOL overtookARender = self.textEntryRenderedValue != nil && gap < self.textEntryAcknowledgeWindowSeconds;
@@ -408,8 +527,28 @@ static const CGFloat AgentDeviceTextEntryNeighbourGap = 16;
   if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-regression"]) {
     BOOL digitCountValue =
         [NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-digit-count-value"];
-    UITextField *textField =
-        digitCountValue ? [[AgentDeviceDigitCountTextField alloc] init] : [[UITextField alloc] init];
+    BOOL digitGroupingValue =
+        [NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-digit-grouping-value"];
+    BOOL currencyValue =
+        [NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-currency-value"];
+    BOOL submitClears =
+        [NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-submit-clears"];
+    UITextField *textField;
+    if (digitCountValue) {
+      textField = [[AgentDeviceDigitCountTextField alloc] init];
+    } else if (digitGroupingValue) {
+      textField = [[AgentDeviceDigitGroupingTextField alloc] init];
+    } else if (currencyValue) {
+      textField = [[AgentDeviceCurrencyTextField alloc] init];
+      textField.text = @"$0.00";
+    } else if (submitClears) {
+      textField = [[AgentDeviceSubmitClearingTextField alloc] init];
+    } else {
+      textField = [[UITextField alloc] init];
+    }
+    if (digitGroupingValue || currencyValue || submitClears) {
+      textField.delegate = (id<UITextFieldDelegate>)textField;
+    }
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-unnamed-input"]) {
       textField.accessibilityIdentifier = @"agent-device-hardware-keyboard-input";
     }
@@ -434,6 +573,22 @@ static const CGFloat AgentDeviceTextEntryNeighbourGap = 16;
       [textField.widthAnchor constraintEqualToConstant:240],
       [textField.heightAnchor constraintEqualToConstant:AgentDeviceTextEntryFieldHeight],
     ]];
+    if (currencyValue || submitClears) {
+      UILabel *entryStatus = [[UILabel alloc] init];
+      entryStatus.accessibilityIdentifier = @"agent-device-text-entry-events";
+      entryStatus.text = @"0";
+      entryStatus.translatesAutoresizingMaskIntoConstraints = NO;
+      [self.view addSubview:entryStatus];
+      [NSLayoutConstraint activateConstraints:@[
+        [entryStatus.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [entryStatus.topAnchor constraintEqualToAnchor:textField.bottomAnchor constant:12],
+      ]];
+      if (currencyValue) {
+        ((AgentDeviceCurrencyTextField *)textField).entryStatus = entryStatus;
+      } else {
+        ((AgentDeviceSubmitClearingTextField *)textField).entryStatus = entryStatus;
+      }
+    }
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-unqueryable-on-focus"]) {
       self.textEntryFocusWitness = [[UILabel alloc] init];
       self.textEntryFocusWitness.accessibilityIdentifier = @"agent-device-text-entry-focus";

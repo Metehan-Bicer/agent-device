@@ -284,6 +284,14 @@ extension RunnerTests {
     return false
   }
 
+  /// The state rule for the macOS app-targeted capture raise: only a window-level grab of an app
+  /// that is not already foreground raises, and a stopped app raises in both shapes because there
+  /// the activation is the launch the capture has always performed (#3254; record in #3338).
+  func macAppCaptureNeedsRaise(fullscreen: Bool?, targetState: XCUIApplication.State) -> Bool {
+    guard targetState != .runningForeground else { return false }
+    return fullscreen != true || targetState == .notRunning
+  }
+
   @MainActor
   func canUseFastForegroundAppGuard(
     activeApp: XCUIApplication,

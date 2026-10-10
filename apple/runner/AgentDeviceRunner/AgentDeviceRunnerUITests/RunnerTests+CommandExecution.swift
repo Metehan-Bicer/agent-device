@@ -428,18 +428,27 @@ extension RunnerTests {
       return Response(ok: true, data: DataPayload(text: text))
     case .screenshot:
 #if os(macOS)
-      // macOS keeps the app-targeted capture behavior for window-level screenshots.
-      if let bundleId = command.appBundleId, !bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      // An app-targeted window-level capture is a screen-region grab: from the background the
+      // occluding app's pixels land in the image, so the raise is what makes the pixels correct
+      // (measured; record in #3338). `--fullscreen` reads the whole display and needs no raise.
+      // The wait belongs to the raise: only a raised app has an activation animation to settle.
+      let screenshotBundleId = command.appBundleId?.trimmedNonEmpty
+      if let bundleId = screenshotBundleId {
         let targetApp = XCUIApplication(bundleIdentifier: bundleId)
-        targetApp.activate()
+        if macAppCaptureNeedsRaise(
+          fullscreen: command.fullscreen,
+          targetState: targetApp.state
+        ) {
+          targetApp.activate()
+          // Brief wait for the app transition animation to complete
+          sleepFor(0.5)
+        }
         activeApp = targetApp
-        // Brief wait for the app transition animation to complete
-        sleepFor(0.5)
       }
       let screenshot: XCUIScreenshot
       if command.fullscreen == true {
         screenshot = XCUIScreen.main.screenshot()
-      } else if let bundleId = command.appBundleId, !bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      } else if screenshotBundleId != nil {
         screenshot = screenshotRoot(app: activeApp).screenshot()
       } else {
         screenshot = XCUIScreen.main.screenshot()
