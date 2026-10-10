@@ -4,7 +4,10 @@ import { AppError, asAppError } from '@agent-device/kernel/errors';
 import { escapeXmlTextAndAttribute } from '@agent-device/xml';
 import type { RuntimeHintValues } from '@agent-device/contracts/application-lifecycle-runtime';
 import { execFailureDetails, type ExecResult } from '@agent-device/host-kit/command';
-import { type ResolvedRuntimeTransport } from '@agent-device/host-kit/runtime-transport-hints';
+import {
+  resolveRuntimeTransportHints,
+  type ResolvedRuntimeTransport,
+} from '@agent-device/host-kit/runtime-transport-hints';
 import { loadAndroidMechanics } from './platform-runtime-android-mechanics.ts';
 
 // React Native's PackagerConnectionSettings/DevInternalSettings read debug_http_host via
@@ -37,7 +40,11 @@ export async function applyRuntimeHintValues(params: {
 }): Promise<void> {
   const { device, appId, values } = params;
   if (!appId) return;
-  const transport = resolveRuntimeTransportHintValues(values);
+  const transport = resolveRuntimeTransportHints({
+    metroHost: values.metroHost,
+    metroPort: values.metroPort ? Number(values.metroPort) : undefined,
+    bundleUrl: values.bundleUrl,
+  });
   if (!transport) return;
 
   if (device.platform === 'android') {
@@ -65,60 +72,6 @@ export async function clearRuntimeHintValues(params: {
   if (isIosFamily(device) && device.kind === 'simulator') {
     await clearIosSimulatorRuntimeHints(device, appId);
   }
-}
-
-function resolveRuntimeTransportHintValues(
-  values: RuntimeHintValues,
-): ResolvedRuntimeTransport | undefined {
-  const bundleTransport = resolveBundleRuntimeTransport(runtimeHintValue(values, 'bundleUrl'));
-  const host = runtimeHintValue(values, 'metroHost') ?? bundleTransport?.host;
-  const port = runtimeHintPort(values, 'metroPort') ?? bundleTransport?.port;
-  const scheme = bundleTransport?.scheme ?? 'http';
-  return host && port ? { host, port, scheme } : undefined;
-}
-
-type RuntimeBundleTransport = Readonly<{
-  host?: string;
-  port?: number;
-  scheme: 'http' | 'https';
-}>;
-
-function resolveBundleRuntimeTransport(
-  bundleUrl: string | undefined,
-): RuntimeBundleTransport | undefined {
-  if (!bundleUrl) return undefined;
-  let parsed: URL;
-  try {
-    parsed = new URL(bundleUrl);
-  } catch (error) {
-    throw new AppError('INVALID_ARGS', `Invalid runtime bundle URL: ${bundleUrl}`, {}, error);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
-  return {
-    host: normalizeRuntimeHintValue(parsed.hostname),
-    port: normalizeRuntimeHintPort(
-      parsed.port.length > 0 ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
-    ),
-    scheme: parsed.protocol === 'https:' ? 'https' : 'http',
-  };
-}
-
-function runtimeHintValue(values: RuntimeHintValues, key: string): string | undefined {
-  return normalizeRuntimeHintValue(values[key]);
-}
-
-function runtimeHintPort(values: RuntimeHintValues, key: string): number | undefined {
-  const value = runtimeHintValue(values, key);
-  return value === undefined ? undefined : normalizeRuntimeHintPort(Number(value));
-}
-
-function normalizeRuntimeHintValue(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeRuntimeHintPort(value: number): number | undefined {
-  return Number.isInteger(value) && value > 0 && value <= 65_535 ? value : undefined;
 }
 
 function androidDevPrefsPaths(packageName: string): string[] {

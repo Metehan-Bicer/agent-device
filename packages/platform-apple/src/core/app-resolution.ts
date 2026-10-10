@@ -14,7 +14,7 @@ import { filterAppleAppsByBundlePrefix } from './app-filter.ts';
 import { buildAppNotInstalledError } from './app-resolution-error.ts';
 import { listMacApps, resolveMacOsApp } from '../os/macos/apps.ts';
 import { runAppleToolCommand } from './tool-provider.ts';
-import { runSimctlForDevice } from './simctl.ts';
+import { readSimctlContainerPath, runSimctlForDevice } from './simctl.ts';
 import { resolveIosPhysicalDeviceControl } from './physical-device-control.ts';
 import { createTtlMemo } from '@agent-device/kernel/ttl-memo';
 import { Deadline } from '@agent-device/host-kit/retry';
@@ -203,6 +203,38 @@ export async function resolveIosSimulatorDeepLinkBundleId(
   if (userMatches.length === 1) return userMatches[0]?.bundleId;
   if (userMatches.length > 1) return undefined;
   return matches.length === 1 ? matches[0]?.bundleId : undefined;
+}
+
+const EXPO_DEV_CLIENT_SCHEME_PREFIX = 'exp+';
+
+/** Resolves the app's sole, uniquely owned exp+ scheme within one shared deadline. */
+export async function resolveIosSimulatorExpoDevClientScheme(
+  device: DeviceInfo,
+  bundleId: string,
+  options: SimulatorAppListOptions = {},
+): Promise<string | undefined> {
+  if (!isIosFamily(device) || device.kind !== 'simulator') return undefined;
+  const remaining = remainingLookupBudget(options);
+  const container = await runSimctlForDevice(
+    device,
+    ['get_app_container', device.id, bundleId, 'app'],
+    { allowFailure: true, ...remaining() },
+  );
+  const appPath = readSimctlContainerPath(String(container.stdout));
+  if (container.exitCode !== 0 || !appPath) return undefined;
+  const schemes = await readIosSimulatorAppUrlSchemes(
+    path.join(appPath, 'Info.plist'),
+    remaining(),
+  );
+  const devClientSchemes = [...schemes].filter(
+    (scheme) =>
+      scheme.startsWith(EXPO_DEV_CLIENT_SCHEME_PREFIX) &&
+      scheme.length > EXPO_DEV_CLIENT_SCHEME_PREFIX.length,
+  );
+  if (devClientSchemes.length !== 1) return undefined;
+  const scheme = devClientSchemes[0];
+  const owner = await resolveIosSimulatorDeepLinkBundleId(device, `${scheme}://`, remaining());
+  return owner === bundleId ? scheme : undefined;
 }
 
 function remainingLookupBudget({

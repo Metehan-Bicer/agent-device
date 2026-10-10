@@ -13,7 +13,7 @@ export function resolveRuntimeTransportHints(
 ): ResolvedRuntimeTransport | undefined {
   if (!runtime) return undefined;
 
-  let host = trimRuntimeValue(runtime.metroHost);
+  let host = normalizeMetroHost(runtime.metroHost);
   let port = normalizePort(runtime.metroPort);
   let scheme: 'http' | 'https' = 'http';
   const bundleUrl = trimRuntimeValue(runtime.bundleUrl);
@@ -45,6 +45,38 @@ export function resolveRuntimeTransportHints(
 export function trimRuntimeValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Resolves a complete server address, retaining its mount but removing the bundle entry. */
+export function resolveRuntimeServerUrl(runtime: SessionRuntimeHints | undefined): URL | undefined {
+  const transport = resolveRuntimeTransportHints(runtime);
+  if (!transport) return undefined;
+  const host =
+    transport.host.includes(':') && !transport.host.startsWith('[')
+      ? `[${transport.host}]`
+      : transport.host;
+  const url = new URL(`${transport.scheme}://${host}:${transport.port}`);
+  if (runtime?.bundleUrl?.trim()) {
+    const bundlePath = new URL(runtime.bundleUrl).pathname.replace(/\/+$/, '');
+    const expoEntry = '/.expo/.virtual-metro-entry.bundle';
+    url.pathname = bundlePath.endsWith(expoEntry)
+      ? bundlePath.slice(0, -expoEntry.length)
+      : /\.(?:bundle|jsbundle|js)$/.test(bundlePath)
+        ? bundlePath.slice(0, bundlePath.lastIndexOf('/'))
+        : bundlePath;
+  }
+  return url;
+}
+
+function normalizeMetroHost(value: string | undefined): string | undefined {
+  const host = trimRuntimeValue(value);
+  if (host && /[/\\?#@\s]/.test(host)) {
+    throw new AppError(
+      'INVALID_ARGS',
+      `Invalid runtime Metro host: ${host}. Use a hostname or IP address.`,
+    );
+  }
+  return host;
 }
 
 function normalizePort(value: number | undefined): number | undefined {

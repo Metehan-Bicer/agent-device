@@ -1,17 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeSessionName } from '@agent-device/host-kit/session-paths';
+import { resolveMetroServerUrl } from './metro-reload-endpoints.ts';
 
-/**
- * The session's local dev-server binding — the single store `metro reload` resolves against.
- * Written by `metro prepare` and `open`'s metro hint flags; cleared on session close and on
- * hintless fresh-session opens. The daemon's SessionRuntimeHints only drive device-native
- * dev-server prefs.
- */
+/** Reload control and the prepared device addresses that may reuse it on a fresh open. */
 export type MetroSessionHints = {
-  metroHost?: string;
-  metroPort?: number;
-  bundleUrl?: string;
+  controlBaseUrl: string;
+  deviceBaseUrls?: string[];
 };
 
 function metroSessionHintsPath(stateDir: string, session: string): string {
@@ -47,13 +42,36 @@ export function readMetroSessionHints(options: {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
   const record = parsed as Record<string, unknown>;
-  const hints: MetroSessionHints = {};
-  if (typeof record.metroHost === 'string' && record.metroHost) hints.metroHost = record.metroHost;
-  if (typeof record.metroPort === 'number' && Number.isInteger(record.metroPort)) {
-    hints.metroPort = record.metroPort;
+  try {
+    const runtime = {
+      metroHost: typeof record.metroHost === 'string' ? record.metroHost : undefined,
+      metroPort: typeof record.metroPort === 'number' ? record.metroPort : undefined,
+      bundleUrl: typeof record.bundleUrl === 'string' ? record.bundleUrl : undefined,
+    };
+    if (
+      typeof record.controlBaseUrl !== 'string' &&
+      Object.values(runtime).every((value) => value === undefined)
+    )
+      return undefined;
+    const url =
+      typeof record.controlBaseUrl === 'string'
+        ? new URL(record.controlBaseUrl)
+        : resolveMetroServerUrl({ runtime });
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? {
+          controlBaseUrl: url.toString(),
+          ...(Array.isArray(record.deviceBaseUrls)
+            ? {
+                deviceBaseUrls: record.deviceBaseUrls.filter(
+                  (value): value is string => typeof value === 'string',
+                ),
+              }
+            : {}),
+        }
+      : undefined;
+  } catch {
+    return undefined;
   }
-  if (typeof record.bundleUrl === 'string' && record.bundleUrl) hints.bundleUrl = record.bundleUrl;
-  return Object.keys(hints).length > 0 ? hints : undefined;
 }
 
 export function clearMetroSessionHints(options: { stateDir: string; session: string }): void {
