@@ -15,10 +15,11 @@ import { resolveDaemonPaths } from '../daemon-resolution.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import { isProcessAlive, waitForProcessExit } from '@agent-device/host-kit/process';
 import { mkdtempForTestSync } from './test-utils/tmp-dir.ts';
+import { closeLoopbackServer, listenOnLoopback } from './test-utils/loopback.ts';
 
 const TEST_TOKEN = 'agent-device-proxy-test-token';
 
-test('prepareMetroRuntime starts Metro, bridges through proxy, and writes runtime file when requested', async () => {
+test('client prepare retains local control and valid proxy runtimes when one device URL is malformed', async () => {
   const tempRoot = mkdtempForTestSync('agent-device-metro');
   const projectRoot = path.join(tempRoot, 'project');
   const binDir = path.join(tempRoot, 'bin');
@@ -85,8 +86,7 @@ test('prepareMetroRuntime starts Metro, bridges through proxy, and writes runtim
             android_runtime: {
               metro_host: 'bridge.example.test',
               metro_port: 443,
-              metro_bundle_url:
-                'https://bridge.example.test/api/metro/runtimes/runtime-1/index.bundle?platform=android&dev=true&minify=false',
+              metro_bundle_url: 'http://[broken',
             },
             upstream: {
               bundle_url: `http://127.0.0.1:${metroPort}/index.bundle?platform=ios&dev=true&minify=false`,
@@ -118,26 +118,25 @@ test('prepareMetroRuntime starts Metro, bridges through proxy, and writes runtim
   await once(proxyServer, 'listening');
 
   let pid = 0;
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ''}`;
+  const client = createAgentDeviceClient({ stateDir: tempRoot, session: 'bridge' });
 
   try {
-    const result = await prepareMetroRuntime({
+    const result = await client.metro.prepare({
       projectRoot,
       publicBaseUrl: `http://127.0.0.1:${metroPort}`,
       proxyBaseUrl: `http://127.0.0.1:${proxyPort}`,
-      proxyBearerToken: TEST_TOKEN,
+      bearerToken: TEST_TOKEN,
       bridgeScope: {
         tenantId: 'tenant-1',
         runId: 'run-1',
         leaseId: 'lease-1',
       },
-      metroPort,
+      port: metroPort,
       reuseExisting: false,
       installDependenciesIfNeeded: false,
       runtimeFilePath,
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ''}`,
-      },
     });
 
     pid = result.pid;
@@ -152,22 +151,24 @@ test('prepareMetroRuntime starts Metro, bridges through proxy, and writes runtim
     assert.equal(result.androidRuntime.platform, 'android');
     assert.deepEqual(requests, ['/api/metro/bridge']);
 
-    const written = JSON.parse(readFileSync(runtimeFilePath, 'utf8')) as {
-      iosRuntime: { metroHost?: string; metroPort?: number; platform?: string };
-      androidRuntime: { metroHost?: string; metroPort?: number; platform?: string };
-      runtimeFilePath?: string;
-    };
+    const written = JSON.parse(readFileSync(runtimeFilePath, 'utf8')) as typeof result;
     assert.equal(written.iosRuntime.metroHost, 'runtime-1.metro.agent-device.dev');
     assert.equal(written.iosRuntime.metroPort, 443);
     assert.equal(written.iosRuntime.platform, 'ios');
     assert.equal(written.androidRuntime.metroHost, 'bridge.example.test');
     assert.equal(written.androidRuntime.platform, 'android');
     assert.equal(written.runtimeFilePath, runtimeFilePath);
+    assert.deepEqual(readMetroSessionHints({ stateDir: tempRoot, session: 'bridge' }), {
+      controlBaseUrl: `http://127.0.0.1:${metroPort}/`,
+      deviceBaseUrls: ['https://runtime-1.metro.agent-device.dev/'],
+    });
+    assert.equal((await client.metro.reload()).body, 'RELOADED');
   } finally {
+    process.env.PATH = previousPath;
     for (const socket of proxySockets) {
       socket.destroy();
     }
-    await closeServer(proxyServer);
+    await closeLoopbackServer(proxyServer);
     await stopProcess(pid);
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -609,7 +610,7 @@ test('reloadMetro preserves the bundle URL route prefix', async () => {
       transport: 'http',
     });
   } finally {
-    await closeServer(server);
+    await closeLoopbackServer(server);
   }
 });
 
@@ -645,7 +646,7 @@ test('reloadMetro preserves a path-prefixed Expo virtual-entry bundle URL suppli
       transport: 'http',
     });
   } finally {
-    await closeServer(server);
+    await closeLoopbackServer(server);
   }
 });
 
@@ -669,7 +670,7 @@ test('reloadMetro defaults to local Metro host and port', async () => {
     assert.equal(result.reloadUrl, `http://localhost:${address.port}/reload`);
     assert.equal(result.body, 'OK');
   } finally {
-    await closeServer(server);
+    await closeLoopbackServer(server);
   }
 });
 
@@ -977,7 +978,7 @@ test('reloadMetro falls back to the /message websocket when the HTTP route answe
     for (const socket of upgradedSockets) {
       socket.destroy();
     }
-    await closeServer(server);
+    await closeLoopbackServer(server);
   }
 });
 
@@ -1069,39 +1070,10 @@ setInterval(() => {}, 1000)
 }
 
 async function findFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        reject(new Error('Failed to allocate free port'));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
-}
-
-async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
-  server.closeIdleConnections?.();
-  server.closeAllConnections?.();
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
+  const server = net.createServer();
+  const port = await listenOnLoopback(server);
+  await closeLoopbackServer(server);
+  return port;
 }
 
 async function stopProcess(pid: number): Promise<void> {

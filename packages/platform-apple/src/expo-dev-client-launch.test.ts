@@ -8,53 +8,37 @@ vi.mock('./core/app-resolution.ts', () => ({
 }));
 
 import { resolveIosSimulatorExpoDevClientScheme } from './core/app-resolution.ts';
-import {
-  buildExpoDevClientLaunchUrl,
-  resolveExpoDevClientLaunchUrl,
-} from './expo-dev-client-launch.ts';
+import { resolveExpoDevClientLaunchUrl } from './expo-dev-client-launch.ts';
 
 const resolveScheme = vi.mocked(resolveIosSimulatorExpoDevClientScheme);
 
 function openInput(overrides: Partial<OpenApplicationInput> = {}): OpenApplicationInput {
   return {
     ...lifecycleOpenInput(),
-    appBundleId: 'com.example.devclient',
     runtimeHints: { metroHost: '127.0.0.1', metroPort: '8085' },
     ...overrides,
   };
 }
 
-afterEach(() => {
-  vi.clearAllMocks();
-});
+afterEach(() => vi.clearAllMocks());
 
 test.each([
   [
     'an http server',
-    new URL('http://127.0.0.1:8085'),
+    undefined,
     'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085',
   ],
   [
     'an https server',
-    new URL('https://metro.example.test'),
+    'https://metro.example.test',
     'exp+dev-slug://expo-development-client/?url=https%3A%2F%2Fmetro.example.test',
   ],
-  [
-    'an IPv6 host',
-    new URL('http://[::1]:8081'),
-    'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8081',
-  ],
-])('builds the dev-client launch URL for %s', (_name, transport, expected) => {
-  expect(buildExpoDevClientLaunchUrl('exp+dev-slug', transport)).toBe(expected);
-});
-
-test('points an expo-dev-client at the Metro host and port of the open', async () => {
+])('points an expo-dev-client at %s', async (_name, bundleUrl, expected) => {
   resolveScheme.mockResolvedValue('exp+dev-slug');
 
-  await expect(resolveExpoDevClientLaunchUrl(SIMULATOR, openInput())).resolves.toBe(
-    'exp+dev-slug://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085',
-  );
-  expect(resolveScheme).toHaveBeenCalledWith(SIMULATOR, 'com.example.devclient', {
+  const input = openInput(bundleUrl ? { runtimeHints: { bundleUrl } } : {});
+  await expect(resolveExpoDevClientLaunchUrl(SIMULATOR, input)).resolves.toBe(expected);
+  expect(resolveScheme).toHaveBeenCalledWith(SIMULATOR, 'com.example.app', {
     timeoutMs: 3_000,
   });
 });

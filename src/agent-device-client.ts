@@ -589,17 +589,18 @@ function persistMetroSessionHints(
   result: Pick<MetroPrepareResult, 'statusUrl' | 'iosRuntime' | 'androidRuntime'>,
 ): void {
   try {
+    const deviceBaseUrls = new Set<string>();
+    for (const runtime of [result.iosRuntime, result.androidRuntime]) {
+      try {
+        const hints = metroHintsFromRuntime(runtime);
+        if (hints) deviceBaseUrls.add(hints.controlBaseUrl);
+      } catch {}
+    }
     writeMetroSessionHints({
       ...metroSessionHintsScope(config),
       hints: {
         controlBaseUrl: new URL('.', result.statusUrl).toString(),
-        deviceBaseUrls: [
-          ...new Set(
-            [result.iosRuntime, result.androidRuntime]
-              .map((runtime) => metroHintsFromRuntime(runtime)?.controlBaseUrl)
-              .filter((url): url is string => url !== undefined),
-          ),
-        ],
+        deviceBaseUrls: [...deviceBaseUrls],
       },
     });
   } catch {
@@ -621,12 +622,8 @@ function resolveMetroSessionHints(
 function metroHintsFromRuntime(
   runtime: SessionRuntimeHints | undefined,
 ): MetroSessionHints | undefined {
-  if (
-    !runtime ||
-    (runtime.metroHost === undefined &&
-      runtime.metroPort === undefined &&
-      runtime.bundleUrl === undefined)
-  )
+  const { metroHost, metroPort, bundleUrl } = runtime ?? {};
+  if (metroHost === undefined && metroPort === undefined && bundleUrl === undefined)
     return undefined;
   return { controlBaseUrl: resolveMetroServerUrl({ runtime }).toString() };
 }

@@ -11,7 +11,11 @@ import type { DaemonRequest, DaemonResponse } from '@agent-device/kernel/contrac
 import { readMetroSessionHints, writeMetroSessionHints } from '../../metro/metro-session-hints.ts';
 import { openCommandFacet } from './app.ts';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
-import { closeLoopbackServer, listenOnLoopback } from '../../__tests__/test-utils/loopback.ts';
+import {
+  closeLoopbackServer,
+  listenOnLoopback,
+  skipWhenLoopbackUnavailable,
+} from '../../__tests__/test-utils/loopback.ts';
 
 function flags(overrides: Partial<CliFlags> = {}): CliFlags {
   return overrides as CliFlags;
@@ -67,9 +71,10 @@ describe('open startup budget', () => {
 });
 
 describe('open command metro session hints', () => {
-  test.each([false, true])(
+  test.for([false, true])(
     'config defaults replace a stale binding only on a fresh open (reused=%s)',
-    async (sessionReused) => {
+    async (sessionReused, t) => {
+      if (await skipWhenLoopbackUnavailable(t)) return;
       const stateDir = tempStateDir();
       const previous = createServer((_req, res) => res.end('PREVIOUS'));
       const current = createServer((_req, res) => res.end('CURRENT'));

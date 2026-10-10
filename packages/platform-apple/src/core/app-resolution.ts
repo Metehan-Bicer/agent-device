@@ -14,7 +14,7 @@ import { filterAppleAppsByBundlePrefix } from './app-filter.ts';
 import { buildAppNotInstalledError } from './app-resolution-error.ts';
 import { listMacApps, resolveMacOsApp } from '../os/macos/apps.ts';
 import { runAppleToolCommand } from './tool-provider.ts';
-import { runSimctlForDevice } from './simctl.ts';
+import { readSimctlContainerPath, runSimctlForDevice } from './simctl.ts';
 import { resolveIosPhysicalDeviceControl } from './physical-device-control.ts';
 import { createTtlMemo } from '@agent-device/kernel/ttl-memo';
 import { Deadline } from '@agent-device/host-kit/retry';
@@ -207,13 +207,7 @@ export async function resolveIosSimulatorDeepLinkBundleId(
 
 const EXPO_DEV_CLIENT_SCHEME_PREFIX = 'exp+';
 
-/**
- * The `exp+<slug>` scheme an installed expo-dev-client registers to receive its dev-server URL,
- * when the app declares exactly one and is that scheme's only owner on the simulator: with a
- * second owner, such as another build variant, `simctl openurl` could hand the URL to the wrong
- * app. Bare React Native apps and Expo Go declare none. `timeoutMs` is one deadline shared by
- * every probe.
- */
+/** Resolves the app's sole, uniquely owned exp+ scheme within one shared deadline. */
 export async function resolveIosSimulatorExpoDevClientScheme(
   device: DeviceInfo,
   bundleId: string,
@@ -226,7 +220,7 @@ export async function resolveIosSimulatorExpoDevClientScheme(
     ['get_app_container', device.id, bundleId, 'app'],
     { allowFailure: true, ...remaining() },
   );
-  const appPath = String(container.stdout).trim();
+  const appPath = readSimctlContainerPath(String(container.stdout));
   if (container.exitCode !== 0 || !appPath) return undefined;
   const schemes = await readIosSimulatorAppUrlSchemes(
     path.join(appPath, 'Info.plist'),

@@ -12,36 +12,32 @@ import { IOS_TEST_SIMULATOR } from './apple-core-stub-helpers.ts';
 const DEV_CLIENT_BUNDLE_ID = 'com.example.devclient';
 
 type InstalledApps = Readonly<{
-  listing: Record<string, unknown>;
-  appPaths: Map<string, string>;
+  listing: Record<string, { ApplicationType: string; CFBundleDisplayName: string; Path: string }>;
   schemesByPlist: Map<string, string[]>;
 }>;
 
 async function installApps(apps: Record<string, string[]>): Promise<InstalledApps> {
   const root = await mkdtempForTest('expo-dev-client-schemes-');
-  const listing: Record<string, unknown> = {};
-  const appPaths = new Map<string, string>();
+  const listing: InstalledApps['listing'] = {};
   const schemesByPlist = new Map<string, string[]>();
   for (const [bundleId, schemes] of Object.entries(apps)) {
     const appPath = path.join(root, `${bundleId}.app`);
     await fs.mkdir(appPath, { recursive: true });
     await fs.writeFile(path.join(appPath, 'Info.plist'), '');
     listing[bundleId] = { ApplicationType: 'User', CFBundleDisplayName: bundleId, Path: appPath };
-    appPaths.set(bundleId, appPath);
     schemesByPlist.set(path.join(appPath, 'Info.plist'), schemes);
   }
-  return { listing, appPaths, schemesByPlist };
-}
-
-function answerContainer(installed: InstalledApps, bundleId: string | undefined, fails: boolean) {
-  const appPath = bundleId === undefined ? undefined : installed.appPaths.get(bundleId);
-  if (fails || appPath === undefined) return { exitCode: 2, stderr: 'no app' };
-  return `${appPath}\n`;
+  return { listing, schemesByPlist };
 }
 
 function answerSchemes(installed: InstalledApps, plistPath: string | undefined): string {
   const schemes = installed.schemesByPlist.get(plistPath ?? '') ?? [];
   return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: schemes }] });
+}
+
+function answerContainer(installed: InstalledApps, bundleId: string | undefined, fails: boolean) {
+  const appPath = installed.listing[bundleId ?? '']?.Path;
+  return fails || !appPath ? { exitCode: 2, stderr: 'no app' } : `${appPath}\n`;
 }
 
 /** Installs each app with the given URL schemes and answers the simctl/plutil probes for them. */
@@ -61,52 +57,39 @@ async function createInstalledApps(
   };
 }
 
-test('an expo-dev-client resolves to its exp+ scheme when it is the scheme’s only owner', async () => {
-  const tool = await createInstalledApps({
-    [DEV_CLIENT_BUNDLE_ID]: ['devclient', 'com.example.devclient', 'exp+dev-slug'],
-    'com.example.other': ['other'],
-  });
-
-  await withFakeAppleTool(tool, async () => {
-    assert.equal(
-      await resolveIosSimulatorExpoDevClientScheme(IOS_TEST_SIMULATOR, DEV_CLIENT_BUNDLE_ID),
-      'exp+dev-slug',
-    );
-  });
-});
-
-test.each([
-  ['a bare React Native app', { [DEV_CLIENT_BUNDLE_ID]: ['devclient'] }],
-  ['an app with two exp+ schemes', { [DEV_CLIENT_BUNDLE_ID]: ['exp+dev-slug', 'exp+other-slug'] }],
+test.each<[string, Record<string, string[]>, string | undefined, boolean?]>([
   [
-    'a scheme another installed variant also owns',
+    'a uniquely owned dev-client scheme',
+    {
+      [DEV_CLIENT_BUNDLE_ID]: ['devclient', 'com.example.devclient', 'exp+dev-slug'],
+      'com.example.other': ['other'],
+    },
+    'exp+dev-slug',
+  ],
+  ['a bare React Native app', { [DEV_CLIENT_BUNDLE_ID]: ['devclient'] }, undefined],
+  ['two exp+ schemes', { [DEV_CLIENT_BUNDLE_ID]: ['exp+dev-slug', 'exp+other-slug'] }, undefined],
+  [
+    'a scheme shared with another installed variant',
     {
       [DEV_CLIENT_BUNDLE_ID]: ['exp+dev-slug'],
       'com.example.devclient.preview': ['exp+dev-slug'],
     },
+    undefined,
   ],
-  ['a bare exp+ prefix', { [DEV_CLIENT_BUNDLE_ID]: ['exp+'] }],
-])('%s has no dev-client scheme', async (_name, apps) => {
-  const tool = await createInstalledApps(apps);
-
-  await withFakeAppleTool(tool, async () => {
-    assert.equal(
-      await resolveIosSimulatorExpoDevClientScheme(IOS_TEST_SIMULATOR, DEV_CLIENT_BUNDLE_ID),
-      undefined,
-    );
-  });
-});
-
-test('an app the simulator cannot locate has no dev-client scheme', async () => {
-  const tool = await createInstalledApps(
+  ['a bare exp+ prefix', { [DEV_CLIENT_BUNDLE_ID]: ['exp+'] }, undefined],
+  [
+    'an app the simulator cannot locate',
     { [DEV_CLIENT_BUNDLE_ID]: ['exp+dev-slug'] },
-    { containerFails: true },
-  );
+    undefined,
+    true,
+  ],
+])('%s resolves only when unambiguous', async (_name, apps, expected, containerFails = false) => {
+  const tool = await createInstalledApps(apps, { containerFails });
 
   await withFakeAppleTool(tool, async () => {
     assert.equal(
       await resolveIosSimulatorExpoDevClientScheme(IOS_TEST_SIMULATOR, DEV_CLIENT_BUNDLE_ID),
-      undefined,
+      expected,
     );
   });
 });

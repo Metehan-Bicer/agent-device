@@ -3,12 +3,7 @@ import path from 'node:path';
 import { safeSessionName } from '@agent-device/host-kit/session-paths';
 import { resolveMetroServerUrl } from './metro-reload-endpoints.ts';
 
-/**
- * The session's local dev-server binding — the single store `metro reload` resolves against.
- * Written by `metro prepare` and `open`'s metro hint flags; cleared on session close and on
- * hintless fresh-session opens. Prepared device addresses identify which app runtime may reuse
- * the local control address on a fresh open.
- */
+/** Reload control and the prepared device addresses that may reuse it on a fresh open. */
 export type MetroSessionHints = {
   controlBaseUrl: string;
   deviceBaseUrls?: string[];
