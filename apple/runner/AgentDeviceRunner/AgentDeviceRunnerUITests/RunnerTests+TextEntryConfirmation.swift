@@ -1,6 +1,6 @@
 import XCTest
 
-// What a replacement's read-back can prove when the field's value does not echo the typed text.
+// Target-bound observations and the replacement read-back policy.
 // The wire shape mirrors the cross-platform `FillUnconfirmedVerification` in
 // packages/contracts/src/fill-evidence.ts.
 extension RunnerTests {
@@ -39,41 +39,74 @@ extension RunnerTests {
     let target: TextEntryElementIdentity
   }
 
-  /// Whether `observed` can be a degraded copy of the residual `baseline` plus the request: it is in
-  /// order inside baseline + request (dropped characters), or it contains the request in order and
-  /// the baseline did not already (residual text), or it contains baseline + request in order. A
-  /// value related to the entry in none of these ways, such as an OTP field announcing
-  /// "6 of 6 digits", is the app's own representation, so retyping cannot make it match.
-  static func textEntryValueEchoes(observed: String, expected: String, baseline: String) -> Bool {
-    let request = textEntryRequestWithoutSubmitKeys(expected)
-    let residualAndRequest = baseline + request
-    return isOrderedSubsequence(observed, of: residualAndRequest)
-      || (isOrderedSubsequence(request, of: observed) && !isOrderedSubsequence(request, of: baseline))
-      || isOrderedSubsequence(residualAndRequest, of: observed)
+  struct ReplacementTextEntryConfirmation {
+    private let requested: String
+    private let baseline: TextEntryObservation?
+    private var deadline: Date
+    private var latest: TextEntryObservation?
+    private var stableSince: Date
+
+    init(requested: String, baseline: TextEntryObservation?, startedAt: Date) {
+      self.requested = requested
+      self.baseline = baseline
+      deadline = startedAt.addingTimeInterval(TextEntryTiming.replacementSettleCeiling)
+      stableSince = startedAt
+    }
+
+    mutating func observe(_ observed: TextEntryObservation, at sampledAt: Date) -> TextEntryResult? {
+      // A late first read still needs one stability window.
+      if latest == nil {
+        deadline = max(deadline, sampledAt.addingTimeInterval(TextEntryTiming.verificationStabilityWindow))
+      }
+      if latest.map({ observed.isSettled(with: $0) }) != true { stableSince = sampledAt }
+      latest = observed
+      let result = RunnerTests.replacementTextEntryResult(requested: requested, baseline: baseline, observed: observed)
+      let settled = sampledAt.timeIntervalSince(stableSince) >= TextEntryTiming.verificationStabilityWindow
+      let moved = baseline.map { !observed.isSettled(with: $0) } ?? true
+      if settled && (moved || result.verified != false || sampledAt >= deadline) {
+        return result
+      }
+      if sampledAt >= deadline {
+        return TextEntryResult(
+          verified: nil, repaired: false, expectedText: requested, observedText: observed.value,
+          failure: .commitNotObserved
+        )
+      }
+      return nil
+    }
   }
 
-  /// Classifies a replacement whose read-back never matched. The entry is unconfirmed, not failed,
-  /// only when the same element's value moved off its pre-entry baseline to one that does not echo
-  /// the request; every other mismatch stays a failure.
-  static func unconfirmedTextEntryEvidence(
+  /// Literal read-back policy; a mismatch does not establish why the app changed the text.
+  static func replacementTextEntryResult(
     requested: String,
     baseline: TextEntryObservation?,
     observed: TextEntryObservation?
-  ) -> TextEntryUnconfirmedEvidence? {
-    guard !textEntryRequestWithoutSubmitKeys(requested).isEmpty,
-          let baseline,
-          let observed,
-          baseline.identity.isSameElement(as: observed.identity),
-          observed.value != baseline.value,
-          !textEntryValueEchoes(observed: observed.value, expected: requested, baseline: baseline.value)
-    else {
-      return nil
+  ) -> TextEntryResult {
+    func result(_ verified: Bool?) -> TextEntryResult {
+      TextEntryResult(verified: verified, repaired: false, expectedText: requested, observedText: observed?.value)
     }
-    return TextEntryUnconfirmedEvidence(
-      requested: requested,
-      before: baseline.value,
-      after: observed.value,
-      target: observed.identity
+    guard let observed else { return result(nil) }
+    if let baseline, !baseline.identity.isSameElement(as: observed.identity) {
+      return result(false)
+    }
+    let request = observed.identity.elementType == elementTypeNamesByRawValue[XCUIElement.ElementType.textView.rawValue]
+      ? requested : textEntryRequestWithoutSubmitKeys(requested)
+    if observed.value == requested || observed.value == request { return result(true) }
+    // Any non-matching single-line submit result remains unverified, even a partial value.
+    if request != requested { return result(nil) }
+    guard !request.isEmpty, let baseline else { return result(false) }
+    if isOrderedSubsequence(observed.value, of: baseline.value + request) { return result(false) }
+    return TextEntryResult(
+      verified: nil,
+      repaired: false,
+      expectedText: requested,
+      observedText: observed.value,
+      unconfirmed: TextEntryUnconfirmedEvidence(
+        requested: requested,
+        before: baseline.value,
+        after: observed.value,
+        target: observed.identity
+      )
     )
   }
 
